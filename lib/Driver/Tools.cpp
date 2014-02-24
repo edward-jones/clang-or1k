@@ -1189,7 +1189,7 @@ void Clang::AddOR1KTargetArgs(const ArgList &Args,
     else if (A->getOption().matches(options::OPT_mhard_float))
       FloatABI = "hard";
     else {
-      FloatABI = A->getValue(Args);
+      FloatABI = A->getValue();
       if (FloatABI != "soft" && FloatABI != "hard") {
         D.Diag(diag::err_drv_invalid_mfloat_abi)
           << A->getAsString(Args);
