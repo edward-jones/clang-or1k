@@ -1328,17 +1328,17 @@ def x : JoinedOrSeparate<["-"], "x">, Flags<[DriverOption,CC1Option]>,
   MetaVarName<"<language>">;
 def y : Joined<["-"], "y">;
 
-def mcmov : Flag<"-mcmov">, Group<m_or1k_Features_Group>;
-def mcompat_delay : Flag<"-mcompat-delay">, Group<m_or1k_Features_Group>;
-def mdelay : Flag<"-mdelay">, Group<m_or1k_Features_Group>;
-def mhard_div : Flag<"-mhard-div">, Group<m_Group>;
-def mhard_mul : Flag<"-mhard-mul">, Group<m_Group>;
-def mno_cmov : Flag<"-mno-cmov">, Group<m_or1k_Features_Group>;
-def mno_delay : Flag<"-mno-delay">, Group<m_or1k_Features_Group>;
-def mno_ror : Flag<"-mno-ror">, Group<m_or1k_Features_Group>;
-def mror : Flag<"-mror">, Group<m_or1k_Features_Group>;
-def msoft_div : Flag<"-msoft-div">, Group<m_Group>;
-def msoft_mul : Flag<"-msoft-mul">, Group<m_Group>;
+def mcmov : Flag<["-"], "mcmov">, Group<m_or1k_Features_Group>;
+def mcompat_delay : Flag<["-"], "mcompat-delay">, Group<m_or1k_Features_Group>;
+def mdelay : Flag<["-"], "mdelay">, Group<m_or1k_Features_Group>;
+def mhard_div : Flag<["-"], "mhard-div">, Group<m_Group>;
+def mhard_mul : Flag<["-"], "mhard-mul">, Group<m_Group>;
+def mno_cmov : Flag<["-"], "mno-cmov">, Group<m_or1k_Features_Group>;
+def mno_delay : Flag<["-"], "mno-delay">, Group<m_or1k_Features_Group>;
+def mno_ror : Flag<["-"], "mno-ror">, Group<m_or1k_Features_Group>;
+def mror : Flag<["-"], "mror">, Group<m_or1k_Features_Group>;
+def msoft_div : Flag<["-"], "msoft-div">, Group<m_Group>;
+def msoft_mul : Flag<["-"], "msoft-mul">, Group<m_Group>;
 
 def working_directory : JoinedOrSeparate<["-"], "working-directory">, Flags<[CC1Option]>,
   HelpText<"Resolve file paths relative to the specified directory">;
