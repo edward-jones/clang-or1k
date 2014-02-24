@@ -571,13 +571,15 @@ protected:
 
 class LLVM_LIBRARY_VISIBILITY OR1KLinux : public Generic_ELF {
 public:
-  OR1KLinux(const Driver &D, const llvm::Triple& Triple, const ArgList &Args);
+  OR1KLinux(const Driver &D, const llvm::Triple& Triple,
+		    const llvm::opt::ArgList &Args);
 
   virtual Tool &SelectTool(const Compilation &C, const JobAction &JA,
                            const ActionList &Inputs) const;
 
-  virtual void AddClangSystemIncludeArgs(const ArgList &DriverArgs,
-                                         ArgStringList &CC1Args) const;
+  virtual void
+  AddClangSystemIncludeArgs(const llvm::opt::ArgList &DriverArgs,
+                            llvm::opt::ArgStringList &CC1Args) const;
 };
 
 class LLVM_LIBRARY_VISIBILITY FreeBSD : public Generic_ELF {
