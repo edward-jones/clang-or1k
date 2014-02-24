@@ -56,6 +56,8 @@ using llvm::opt::ArgStringList;
                           bool KernelOrKext) const;
     void AddMIPSTargetArgs(const llvm::opt::ArgList &Args,
                            llvm::opt::ArgStringList &CmdArgs) const;
+    void AddOR1KTargetArgs(const llvm::opt::ArgList &Args,
+                           llvm::opt::ArgStringList &CmdArgs) const;
     void AddR600TargetArgs(const llvm::opt::ArgList &Args,
                            llvm::opt::ArgStringList &CmdArgs) const;
     void AddSparcTargetArgs(const llvm::opt::ArgList &Args,

@@ -350,6 +350,8 @@ protected:
       Builder.defineMacro("_REENTRANT");
     if (Opts.CPlusPlus)
       Builder.defineMacro("_GNU_SOURCE");
+    if (Triple.getArch() == llvm::Triple::or1k)
+      Builder.defineMacro("__UCLIBC__");
   }
 public:
   LinuxTargetInfo(const llvm::Triple &Triple) : OSTargetInfo<Target>(Triple) {
@@ -1542,6 +1544,111 @@ public:
 };
 
 } // end anonymous namespace
+
+namespace {
+// OR1K abstract base class
+class OR1KTargetInfo : public TargetInfo {
+  static const char * const GCCRegNames[];
+  static const TargetInfo::GCCRegAlias GCCRegAliases[];
+
+public:
+  OR1KTargetInfo(const std::string& triple) : TargetInfo(triple) {
+    LongLongAlign = 32;
+    DoubleAlign = 32;
+    LongDoubleAlign = 32;
+    SuitableAlign = 32;
+    DescriptionString = "E-p:32:32-i8:8:8-i16:16:16-i64:32:32-"
+                        "f64:32:32-v64:32:32-v128:32:32-a0:0:32-n32";
+    UserLabelPrefix = "";
+  }
+
+  virtual void getTargetBuiltins(const Builtin::Info *&Records,
+                                 unsigned &NumRecords) const {
+    // FIXME: Implement.
+    Records = 0;
+    NumRecords = 0;
+  }
+
+  virtual void getTargetDefines(const LangOptions &Opts,
+                                MacroBuilder &Builder) const;
+
+  virtual bool hasFeature(StringRef Feature) const {
+    return Feature == "or1k";
+  }
+
+  virtual bool setFeatureEnabled(llvm::StringMap<bool> &Features,
+                                 StringRef Name,
+                                 bool Enabled) const {
+    if (Name == "mul" ||
+        Name == "div" ||
+        Name == "ror" ||
+        Name == "cmov") {
+      Features[Name] = Enabled;
+      return true;
+    }
+    return false;
+  }
+
+  virtual BuiltinVaListKind getBuiltinVaListKind() const {
+    return TargetInfo::VoidPtrBuiltinVaList;
+  }
+
+  virtual void getGCCRegNames(const char * const *&Names,
+                              unsigned &NumNames) const;
+  virtual void getGCCRegAliases(const GCCRegAlias *&Aliases,
+                                unsigned &NumAliases) const;
+  virtual bool validateAsmConstraint(const char *&Name,
+                                     TargetInfo::ConstraintInfo &Info) const {
+    switch (*Name) {
+    default: return false;
+    case 'O': // Zero
+      return true;
+    case 'b': // Base register
+    case 'f': // Floating point register
+      Info.setAllowsRegister();
+      return true;
+    }
+  }
+  virtual const char *getClobbers() const {
+    return "";
+  }
+};
+
+/// OR1KTargetInfo::getTargetDefines - Return a set of the OR1K-specific
+/// #defines that are not tied to a specific subtarget.
+void OR1KTargetInfo::getTargetDefines(const LangOptions &Opts,
+                                      MacroBuilder &Builder) const {
+  // Target identification.
+  Builder.defineMacro("__or1k__");
+  Builder.defineMacro("__OR1K__");
+
+  // Target properties.
+  Builder.defineMacro("_BIG_ENDIAN_");
+  Builder.defineMacro("__BIG_ENDIAN__");
+
+  // Subtarget options.
+  Builder.defineMacro("__REGISTER_PREFIX__", "");
+}
+
+const char * const OR1KTargetInfo::GCCRegNames[] = {
+  "r0",   "r1",   "r2",   "r3",   "r4",   "r5",   "r6",   "r7",
+  "r8",   "r9",   "r10",  "r11",  "r12",  "r13",  "r14",  "r15",
+  "r16",  "r17",  "r18",  "r19",  "r20",  "r21",  "r22",  "r23",
+  "r24",  "r25",  "r26",  "r27",  "r28",  "r29",  "r30",  "r31"
+};
+
+void OR1KTargetInfo::getGCCRegNames(const char * const *&Names,
+                                    unsigned &NumNames) const {
+  Names = GCCRegNames;
+  NumNames = llvm::array_lengthof(GCCRegNames);
+}
+
+void OR1KTargetInfo::getGCCRegAliases(const GCCRegAlias *&Aliases,
+                                      unsigned &NumAliases) const {
+  Aliases = 0;
+  NumAliases = 0;
+}
+} // end anonymous namespace.
 
 namespace {
 // Namespace for x86 abstract base class
@@ -5737,6 +5844,14 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple) {
 
   case llvm::Triple::r600:
     return new R600TargetInfo(Triple);
+
+  case llvm::Triple::or1k:
+    switch (os) {
+    case llvm::Triple::Linux:
+      return new LinuxTargetInfo<OR1KTargetInfo>(T);
+    default:
+      return new OR1KTargetInfo(T);
+    }
 
   case llvm::Triple::sparc:
     switch (os) {

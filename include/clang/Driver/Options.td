@@ -73,6 +73,7 @@ def m_x86_Features_Group  : OptionGroup<"<m x86 features group>">, Group<m_Group
 def m_hexagon_Features_Group  : OptionGroup<"<m hexagon features group>">, Group<m_Group>;
 def m_arm_Features_Group  : OptionGroup<"<m arm features group>">, Group<m_Group>;
 def m_aarch64_Features_Group  : OptionGroup<"<m aarch64 features group>">, Group<m_Group>;
+def m_or1k_Features_Group : OptionGroup<"<m or1k features group>">, Group<m_Group>;
 def m_ppc_Features_Group  : OptionGroup<"<m ppc features group>">, Group<m_Group>;
 def u_Group               : OptionGroup<"<u group>">;
 
@@ -1326,6 +1327,18 @@ def x : JoinedOrSeparate<["-"], "x">, Flags<[DriverOption,CC1Option]>,
   HelpText<"Treat subsequent input files as having type <language>">,
   MetaVarName<"<language>">;
 def y : Joined<["-"], "y">;
+
+def mcmov : Flag<"-mcmov">, Group<m_or1k_Features_Group>;
+def mcompat_delay : Flag<"-mcompat-delay">, Group<m_or1k_Features_Group>;
+def mdelay : Flag<"-mdelay">, Group<m_or1k_Features_Group>;
+def mhard_div : Flag<"-mhard-div">, Group<m_Group>;
+def mhard_mul : Flag<"-mhard-mul">, Group<m_Group>;
+def mno_cmov : Flag<"-mno-cmov">, Group<m_or1k_Features_Group>;
+def mno_delay : Flag<"-mno-delay">, Group<m_or1k_Features_Group>;
+def mno_ror : Flag<"-mno-ror">, Group<m_or1k_Features_Group>;
+def mror : Flag<"-mror">, Group<m_or1k_Features_Group>;
+def msoft_div : Flag<"-msoft-div">, Group<m_Group>;
+def msoft_mul : Flag<"-msoft-mul">, Group<m_Group>;
 
 def working_directory : JoinedOrSeparate<["-"], "working-directory">, Flags<[CC1Option]>,
   HelpText<"Resolve file paths relative to the specified directory">;

@@ -2485,7 +2485,7 @@ void X86_64ABIInfo::computeInfo(CGFunctionInfo &FI) const {
        it != ie; ++it) {
     bool isNamedArg = true;
     if (isVariadic)
-      isNamedArg = (it - FI.arg_begin()) < 
+      isNamedArg = (it - FI.arg_begin()) <
                     static_cast<signed>(numRequiredArgs);
 
     unsigned neededInt, neededSSE;
@@ -2565,8 +2565,9 @@ llvm::Value *X86_64ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
   // };
   unsigned neededInt, neededSSE;
 
+  Ty = getFirstFieldInTransparentUnion(Ty);
   Ty = CGF.getContext().getCanonicalType(Ty);
-  ABIArgInfo AI = classifyArgumentType(Ty, 0, neededInt, neededSSE, 
+  ABIArgInfo AI = classifyArgumentType(Ty, 0, neededInt, neededSSE,
                                        /*isNamedArg*/false);
 
   // AMD64-ABI 3.5.7p5: Step 1. Determine whether type may be passed
@@ -2934,7 +2935,7 @@ public:
     }
   }
 
-  virtual llvm::Value *EmitVAArg(llvm::Value *VAListAddr, 
+  virtual llvm::Value *EmitVAArg(llvm::Value *VAListAddr,
                                  QualType Ty,
                                  CodeGenFunction &CGF) const;
 };
@@ -3305,7 +3306,7 @@ void ARMABIInfo::computeInfo(CGFunctionInfo &FI) const {
   // VFP registers of the appropriate type unallocated then the argument is
   // allocated to the lowest-numbered sequence of such registers.
   // C.2.vfp If the argument is a VFP CPRC then any VFP registers that are
-  // unallocated are marked as unavailable. 
+  // unallocated are marked as unavailable.
   resetAllocatedRegs();
 
   FI.getReturnInfo() = classifyReturnType(FI.getReturnType(), FI.isVariadic());
@@ -3350,7 +3351,7 @@ void ARMABIInfo::computeInfo(CGFunctionInfo &FI) const {
 
   llvm::CallingConv::ID cc = getRuntimeCC();
   if (cc != llvm::CallingConv::C)
-    FI.setEffectiveCallingConvention(cc);    
+    FI.setEffectiveCallingConvention(cc);
 }
 
 /// Return the default calling convention that LLVM will use.
@@ -3423,7 +3424,7 @@ static bool isHomogeneousAggregate(QualType Ty, const Type *&Base,
     // Homogeneous aggregates for AAPCS-VFP must have base types of float,
     // double, or 64-bit or 128-bit vectors.
     if (const BuiltinType *BT = Ty->getAs<BuiltinType>()) {
-      if (BT->getKind() != BuiltinType::Float && 
+      if (BT->getKind() != BuiltinType::Float &&
           BT->getKind() != BuiltinType::Double &&
           BT->getKind() != BuiltinType::LongDouble)
         return false;
@@ -4415,7 +4416,7 @@ class NVPTXTargetCodeGenInfo : public TargetCodeGenInfo {
 public:
   NVPTXTargetCodeGenInfo(CodeGenTypes &CGT)
     : TargetCodeGenInfo(new NVPTXABIInfo(CGT)) {}
-    
+
   virtual void SetTargetAttributes(const Decl *D, llvm::GlobalValue *GV,
                                    CodeGen::CodeGenModule &M) const;
 private:
@@ -4832,6 +4833,93 @@ ABIArgInfo SystemZABIInfo::classifyArgumentType(QualType Ty) const {
 }
 
 //===----------------------------------------------------------------------===//
+// OR1K ABI Implementation
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+class OR1KABIInfo : public ABIInfo {
+public:
+  OR1KABIInfo(CodeGenTypes &CGT) : ABIInfo(CGT) {}
+
+  bool isPromotableIntegerType(QualType Ty) const;
+
+  ABIArgInfo classifyReturnType(QualType RetTy) const;
+  ABIArgInfo classifyArgumentType(QualType Ty) const;
+
+  virtual void computeInfo(CGFunctionInfo &FI) const {
+    FI.getReturnInfo() = classifyReturnType(FI.getReturnType());
+    for (CGFunctionInfo::arg_iterator it = FI.arg_begin(), ie = FI.arg_end();
+         it != ie; ++it)
+      it->info = classifyArgumentType(it->type);
+  }
+
+  virtual llvm::Value *EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
+                                 CodeGenFunction &CGF) const;
+};
+
+class OR1KTargetCodeGenInfo : public TargetCodeGenInfo {
+public:
+  OR1KTargetCodeGenInfo(CodeGenTypes &CGT)
+    : TargetCodeGenInfo(new OR1KABIInfo(CGT)) {}
+  void SetTargetAttributes(const Decl *D, llvm::GlobalValue *GV,
+                           CodeGen::CodeGenModule &M) const;
+};
+
+}
+
+bool OR1KABIInfo::isPromotableIntegerType(QualType Ty) const {
+  // OR1K ABI requires all 8 and 16 bit quantities to be extended.
+  if (const BuiltinType *BT = Ty->getAs<BuiltinType>())
+    switch (BT->getKind()) {
+    case BuiltinType::Bool:
+    case BuiltinType::Char_S:
+    case BuiltinType::Char_U:
+    case BuiltinType::SChar:
+    case BuiltinType::UChar:
+    case BuiltinType::Short:
+    case BuiltinType::UShort:
+      return true;
+    default:
+      return false;
+    }
+  return false;
+}
+
+llvm::Value *OR1KABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
+                                    CodeGenFunction &CGF) const {
+  // FIXME: Implement
+  return 0;
+}
+
+
+ABIArgInfo OR1KABIInfo::classifyReturnType(QualType RetTy) const {
+  if (RetTy->isVoidType())
+    return ABIArgInfo::getIgnore();
+  if (isAggregateTypeForABI(RetTy))
+    return ABIArgInfo::getIndirect(0);
+
+  return (isPromotableIntegerType(RetTy) ?
+          ABIArgInfo::getExtend() : ABIArgInfo::getDirect());
+}
+
+ABIArgInfo OR1KABIInfo::classifyArgumentType(QualType Ty) const {
+  Ty = getFirstFieldInTransparentUnion(Ty);
+  if (isAggregateTypeForABI(Ty))
+    return ABIArgInfo::getIndirect(0);
+
+  return (isPromotableIntegerType(Ty) ?
+          ABIArgInfo::getExtend() : ABIArgInfo::getDirect());
+}
+
+void OR1KTargetCodeGenInfo::SetTargetAttributes(const Decl *D,
+                                                llvm::GlobalValue *GV,
+                                                CodeGen::CodeGenModule &M)
+                                                  const {
+}
+
+
+//===----------------------------------------------------------------------===//
 // MSP430 ABI Implementation
 //===----------------------------------------------------------------------===//
 
@@ -4969,7 +5057,7 @@ llvm::Type* MipsABIInfo::HandleAggregates(QualType Ty, uint64_t TySize) const {
   const RecordDecl *RD = RT->getDecl();
   const ASTRecordLayout &Layout = getContext().getASTRecordLayout(RD);
   assert(!(TySize % 8) && "Size of structure must be multiple of 8.");
-  
+
   uint64_t LastOffset = 0;
   unsigned idx = 0;
   llvm::IntegerType *I64 = llvm::IntegerType::get(getVMContext(), 64);
@@ -5065,7 +5153,7 @@ MipsABIInfo::returnAggregateInRegs(QualType RetTy, uint64_t Size) const {
     // 1. The size of the struct/class is no larger than 128-bit.
     // 2. The struct/class has one or two fields all of which are floating
     //    point types.
-    // 3. The offset of the first field is zero (this follows what gcc does). 
+    // 3. The offset of the first field is zero (this follows what gcc does).
     //
     // Any other composite results are returned in integer registers.
     //
@@ -5129,7 +5217,7 @@ void MipsABIInfo::computeInfo(CGFunctionInfo &FI) const {
   ABIArgInfo &RetInfo = FI.getReturnInfo();
   RetInfo = classifyReturnType(FI.getReturnType());
 
-  // Check if a pointer to an aggregate is passed as a hidden argument.  
+  // Check if a pointer to an aggregate is passed as a hidden argument.
   uint64_t Offset = RetInfo.isIndirect() ? MinABIStackAlignInBytes : 0;
 
   for (CGFunctionInfo::arg_iterator it = FI.arg_begin(), ie = FI.arg_end();
@@ -5141,7 +5229,7 @@ llvm::Value* MipsABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
                                     CodeGenFunction &CGF) const {
   llvm::Type *BP = CGF.Int8PtrTy;
   llvm::Type *BPP = CGF.Int8PtrPtrTy;
- 
+
   CGBuilderTy &Builder = CGF.Builder;
   llvm::Value *VAListAddrAsBPP = Builder.CreateBitCast(VAListAddr, BPP, "ap");
   llvm::Value *Addr = Builder.CreateLoad(VAListAddrAsBPP, "ap.cur");
@@ -5160,7 +5248,7 @@ llvm::Value* MipsABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
     AddrTyped = CGF.Builder.CreateIntToPtr(And, PTy);
   }
   else
-    AddrTyped = Builder.CreateBitCast(Addr, PTy);  
+    AddrTyped = Builder.CreateBitCast(Addr, PTy);
 
   llvm::Value *AlignedAddr = Builder.CreateBitCast(AddrTyped, BP);
   TypeAlign = std::max((unsigned)TypeAlign, MinABIStackAlignInBytes);
@@ -5170,7 +5258,7 @@ llvm::Value* MipsABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
     Builder.CreateGEP(AlignedAddr, llvm::ConstantInt::get(IntTy, Offset),
                       "ap.next");
   Builder.CreateStore(NextAddr, VAListAddrAsBPP);
-  
+
   return AddrTyped;
 }
 
@@ -5204,7 +5292,7 @@ MIPSTargetCodeGenInfo::initDwarfEHRegSizeTable(CodeGen::CodeGenFunction &CGF,
 
 //===----------------------------------------------------------------------===//
 // TCE ABI Implementation (see http://tce.cs.tut.fi). Uses mostly the defaults.
-// Currently subclassed only to implement custom OpenCL C function attribute 
+// Currently subclassed only to implement custom OpenCL C function attribute
 // handling.
 //===----------------------------------------------------------------------===//
 
@@ -5226,7 +5314,7 @@ void TCETargetCodeGenInfo::SetTargetAttributes(const Decl *D,
   if (!FD) return;
 
   llvm::Function *F = cast<llvm::Function>(GV);
-  
+
   if (M.getLangOpts().OpenCL) {
     if (FD->hasAttr<OpenCLKernelAttr>()) {
       // OpenCL C Kernel functions are not subject to inlining
@@ -5235,21 +5323,21 @@ void TCETargetCodeGenInfo::SetTargetAttributes(const Decl *D,
       if (Attr) {
         // Convert the reqd_work_group_size() attributes to metadata.
         llvm::LLVMContext &Context = F->getContext();
-        llvm::NamedMDNode *OpenCLMetadata = 
+        llvm::NamedMDNode *OpenCLMetadata =
             M.getModule().getOrInsertNamedMetadata("opencl.kernel_wg_size_info");
 
         SmallVector<llvm::Value*, 5> Operands;
         Operands.push_back(F);
 
-        Operands.push_back(llvm::Constant::getIntegerValue(M.Int32Ty, 
+        Operands.push_back(llvm::Constant::getIntegerValue(M.Int32Ty,
                              llvm::APInt(32, Attr->getXDim())));
         Operands.push_back(llvm::Constant::getIntegerValue(M.Int32Ty,
                              llvm::APInt(32, Attr->getYDim())));
-        Operands.push_back(llvm::Constant::getIntegerValue(M.Int32Ty, 
+        Operands.push_back(llvm::Constant::getIntegerValue(M.Int32Ty,
                              llvm::APInt(32, Attr->getZDim())));
 
         // Add a boolean constant operand for "required" (true) or "hint" (false)
-        // for implementing the work_group_size_hint attr later. Currently 
+        // for implementing the work_group_size_hint attr later. Currently
         // always true as the hint is not yet implemented.
         Operands.push_back(llvm::ConstantInt::getTrue(Context));
         OpenCLMetadata->addOperand(llvm::MDNode::get(Context, Operands));
@@ -5795,6 +5883,9 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
 
   case llvm::Triple::msp430:
     return *(TheTargetCodeGenInfo = new MSP430TargetCodeGenInfo(Types));
+
+  case llvm::Triple::or1k:
+    return *(TheTargetCodeGenInfo = new OR1KTargetCodeGenInfo(Types));
 
   case llvm::Triple::systemz:
     return *(TheTargetCodeGenInfo = new SystemZTargetCodeGenInfo(Types));
