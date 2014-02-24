@@ -1552,7 +1552,7 @@ class OR1KTargetInfo : public TargetInfo {
   static const TargetInfo::GCCRegAlias GCCRegAliases[];
 
 public:
-  OR1KTargetInfo(const std::string& triple) : TargetInfo(triple) {
+  OR1KTargetInfo(const llvm::Triple &triple) : TargetInfo(triple) {
     LongLongAlign = 32;
     DoubleAlign = 32;
     LongDoubleAlign = 32;
@@ -1576,7 +1576,7 @@ public:
     return Feature == "or1k";
   }
 
-  virtual bool setFeatureEnabled(llvm::StringMap<bool> &Features,
+  virtual void setFeatureEnabled(llvm::StringMap<bool> &Features,
                                  StringRef Name,
                                  bool Enabled) const {
     if (Name == "mul" ||
@@ -1584,9 +1584,7 @@ public:
         Name == "ror" ||
         Name == "cmov") {
       Features[Name] = Enabled;
-      return true;
     }
-    return false;
   }
 
   virtual BuiltinVaListKind getBuiltinVaListKind() const {
@@ -5848,9 +5846,9 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple) {
   case llvm::Triple::or1k:
     switch (os) {
     case llvm::Triple::Linux:
-      return new LinuxTargetInfo<OR1KTargetInfo>(T);
+      return new LinuxTargetInfo<OR1KTargetInfo>(Triple);
     default:
-      return new OR1KTargetInfo(T);
+      return new OR1KTargetInfo(Triple);
     }
 
   case llvm::Triple::sparc:
