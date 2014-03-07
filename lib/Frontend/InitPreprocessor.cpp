@@ -315,9 +315,11 @@ static void InitializeStandardPredefinedMacros(const TargetInfo &TI,
     else if (!LangOpts.GNUMode && LangOpts.Digraphs)
       Builder.defineMacro("__STDC_VERSION__", "199409L");
   } else {
-    // FIXME: Use the right value for __cplusplus for C++1y once one is chosen.
-    if (LangOpts.CPlusPlus1y)
-      Builder.defineMacro("__cplusplus", "201305L");
+    // C++1y [cpp.predefined]p1:
+    //   The name __cplusplus is defined to the value 201402L when compiling a
+    //   C++ translation unit.
+     if (LangOpts.CPlusPlus1y)
+      Builder.defineMacro("__cplusplus", "201402L");
     // C++11 [cpp.predefined]p1:
     //   The name __cplusplus is defined to the value 201103L when compiling a
     //   C++ translation unit.
@@ -600,9 +602,6 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   DefineType("__CHAR16_TYPE__", TI.getChar16Type(), Builder);
   DefineType("__CHAR32_TYPE__", TI.getChar32Type(), Builder);
 
-  Builder.defineMacro("__ALIGNOF_MAX_ALIGN_T__",
-                      Twine(TI.getSuitableAlign() / TI.getCharWidth()));
-
   DefineFloatMacros(Builder, "FLT", &TI.getFloatFormat(), "F");
   DefineFloatMacros(Builder, "DBL", &TI.getDoubleFormat(), "");
   DefineFloatMacros(Builder, "LDBL", &TI.getLongDoubleFormat(), "L");
@@ -721,12 +720,12 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
 
   // OpenMP definition
   if (LangOpts.OpenMP) {
-    // OpenMP 2.2: 
+    // OpenMP 2.2:
     //   In implementations that support a preprocessor, the _OPENMP
     //   macro name is defined to have the decimal value yyyymm where
     //   yyyy and mm are the year and the month designations of the
     //   version of the OpenMP API that the implementation support.
-    Builder.defineMacro("_OPENMP", "201107");
+    Builder.defineMacro("_OPENMP", "201307");
   }
 
   // Get other target #defines.

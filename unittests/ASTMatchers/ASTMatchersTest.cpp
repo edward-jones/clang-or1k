@@ -665,7 +665,7 @@ public:
       : Id(Id), ExpectedCount(ExpectedCount), Count(0),
         ExpectedName(ExpectedName) {}
 
-  void onEndOfTranslationUnit() LLVM_OVERRIDE {
+  void onEndOfTranslationUnit() override {
     if (ExpectedCount != -1)
       EXPECT_EQ(ExpectedCount, Count);
     if (!ExpectedName.empty())
@@ -1530,6 +1530,19 @@ TEST(Matcher, MatchesDeclarationReferenceTemplateArgument) {
       "A<int> a;",
       classTemplateSpecializationDecl(hasAnyTemplateArgument(
           refersToDeclaration(decl())))));
+
+  EXPECT_TRUE(matches(
+      "struct B { int next; };"
+      "template<int(B::*next_ptr)> struct A {};"
+      "A<&B::next> a;",
+      templateSpecializationType(hasAnyTemplateArgument(isExpr(
+          hasDescendant(declRefExpr(to(fieldDecl(hasName("next"))))))))));
+
+  EXPECT_TRUE(notMatches(
+      "template <typename T> struct A {};"
+      "A<int> a;",
+      templateSpecializationType(hasAnyTemplateArgument(
+          refersToDeclaration(decl())))));
 }
 
 TEST(Matcher, MatchesSpecificArgument) {
@@ -1542,6 +1555,17 @@ TEST(Matcher, MatchesSpecificArgument) {
       "template<typename T, typename U> class A {};"
       "A<int, bool> a;",
       classTemplateSpecializationDecl(hasTemplateArgument(
+          1, refersToType(asString("int"))))));
+
+  EXPECT_TRUE(matches(
+      "template<typename T, typename U> class A {};"
+      "A<bool, int> a;",
+      templateSpecializationType(hasTemplateArgument(
+          1, refersToType(asString("int"))))));
+  EXPECT_TRUE(notMatches(
+      "template<typename T, typename U> class A {};"
+      "A<int, bool> a;",
+      templateSpecializationType(hasTemplateArgument(
           1, refersToType(asString("int"))))));
 }
 
@@ -1562,6 +1586,13 @@ TEST(Matcher, MatchesVirtualMethod) {
       methodDecl(isVirtual(), hasName("::X::f"))));
   EXPECT_TRUE(notMatches("class X { int f(); };",
       methodDecl(isVirtual())));
+}
+
+TEST(Matcher, MatchesPureMethod) {
+  EXPECT_TRUE(matches("class X { virtual int f() = 0; };",
+      methodDecl(isPure(), hasName("::X::f"))));
+  EXPECT_TRUE(notMatches("class X { int f(); };",
+      methodDecl(isPure())));
 }
 
 TEST(Matcher, MatchesConstMethod) {
@@ -3636,12 +3667,16 @@ TEST(TypeMatching, MatchesVariableArrayType) {
 }
 
 TEST(TypeMatching, MatchesAtomicTypes) {
-  EXPECT_TRUE(matches("_Atomic(int) i;", atomicType()));
+  if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getOS() !=
+      llvm::Triple::Win32) {
+    // FIXME: Make this work for MSVC.
+    EXPECT_TRUE(matches("_Atomic(int) i;", atomicType()));
 
-  EXPECT_TRUE(matches("_Atomic(int) i;",
-                      atomicType(hasValueType(isInteger()))));
-  EXPECT_TRUE(notMatches("_Atomic(float) f;",
-                         atomicType(hasValueType(isInteger()))));
+    EXPECT_TRUE(matches("_Atomic(int) i;",
+                        atomicType(hasValueType(isInteger()))));
+    EXPECT_TRUE(notMatches("_Atomic(float) f;",
+                           atomicType(hasValueType(isInteger()))));
+  }
 }
 
 TEST(TypeMatching, MatchesAutoTypes) {

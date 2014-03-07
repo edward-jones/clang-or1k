@@ -109,7 +109,7 @@ InputArgList *Driver::ParseArgStrings(ArrayRef<const char *> ArgList) {
 
   unsigned IncludedFlagsBitmask;
   unsigned ExcludedFlagsBitmask;
-  llvm::tie(IncludedFlagsBitmask, ExcludedFlagsBitmask) =
+  std::tie(IncludedFlagsBitmask, ExcludedFlagsBitmask) =
     getIncludeExcludeOptionFlagMasks();
 
   unsigned MissingArgIndex, MissingArgCount;
@@ -522,8 +522,7 @@ void Driver::generateCompilationDiagnostics(Compilation &C,
       std::string Err;
       std::string Script = StringRef(*it).rsplit('.').first;
       Script += ".sh";
-      llvm::raw_fd_ostream ScriptOS(
-          Script.c_str(), Err, llvm::sys::fs::F_Excl | llvm::sys::fs::F_Binary);
+      llvm::raw_fd_ostream ScriptOS(Script.c_str(), Err, llvm::sys::fs::F_Excl);
       if (!Err.empty()) {
         Diag(clang::diag::note_drv_command_failed_diag_msg)
           << "Error generating run script: " + Script + " " + Err;
@@ -620,7 +619,7 @@ int Driver::ExecuteCompilation(const Compilation &C,
 void Driver::PrintHelp(bool ShowHidden) const {
   unsigned IncludedFlagsBitmask;
   unsigned ExcludedFlagsBitmask;
-  llvm::tie(IncludedFlagsBitmask, ExcludedFlagsBitmask) =
+  std::tie(IncludedFlagsBitmask, ExcludedFlagsBitmask) =
     getIncludeExcludeOptionFlagMasks();
 
   ExcludedFlagsBitmask |= options::NoDriverOption;
@@ -1972,7 +1971,7 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
         TC = new toolchains::Generic_ELF(*this, Target, Args);
         break;
       }
-      if (Target.getEnvironment() == llvm::Triple::MachO) {
+      if (Target.getObjectFormat() == llvm::Triple::MachO) {
         TC = new toolchains::MachO(*this, Target, Args);
         break;
       }

@@ -25,36 +25,314 @@
 
 using namespace clang;
 
-namespace {
-class DeadCodeScan {
-  llvm::BitVector Visited;
-  llvm::BitVector &Reachable;
-  SmallVector<const CFGBlock *, 10> WorkList;
-  
-  typedef SmallVector<std::pair<const CFGBlock *, const Stmt *>, 12>
-      DeferredLocsTy;
-  
-  DeferredLocsTy DeferredLocs;
-  
-public:
-  DeadCodeScan(llvm::BitVector &reachable)
-    : Visited(reachable.size()),
-      Reachable(reachable) {}
-  
-  void enqueue(const CFGBlock *block);  
-  unsigned scanBackwards(const CFGBlock *Start,
-                         clang::reachable_code::Callback &CB);
-  
-  bool isDeadCodeRoot(const CFGBlock *Block);
-  
-  const Stmt *findDeadCode(const CFGBlock *Block);
-  
-  void reportDeadCode(const Stmt *S,
-                      clang::reachable_code::Callback &CB);
-};
+//===----------------------------------------------------------------------===//
+// Core Reachability Analysis routines.
+//===----------------------------------------------------------------------===//
+
+static bool bodyEndsWithNoReturn(const CFGBlock *B) {
+  for (CFGBlock::const_reverse_iterator I = B->rbegin(), E = B->rend();
+       I != E; ++I) {
+    if (Optional<CFGStmt> CS = I->getAs<CFGStmt>()) {
+      const Stmt *S = CS->getStmt();
+      if (const ExprWithCleanups *EWC = dyn_cast<ExprWithCleanups>(S))
+        S = EWC->getSubExpr();
+      if (const CallExpr *CE = dyn_cast<CallExpr>(S)) {
+        QualType CalleeType = CE->getCallee()->getType();
+        if (getFunctionExtInfo(*CalleeType).getNoReturn())
+          return true;
+      }
+      break;
+    }
+  }
+  return false;
 }
 
-void DeadCodeScan::enqueue(const CFGBlock *block) {  
+static bool bodyEndsWithNoReturn(const CFGBlock::AdjacentBlock &AB) {
+  // If the predecessor is a normal CFG edge, then by definition
+  // the predecessor did not end with a 'noreturn'.
+  if (AB.getReachableBlock())
+    return false;
+
+  const CFGBlock *Pred = AB.getPossiblyUnreachableBlock();
+  assert(!AB.isReachable() && Pred);
+  return bodyEndsWithNoReturn(Pred);
+}
+
+static bool isBreakPrecededByNoReturn(const CFGBlock *B,
+                                      const Stmt *S) {
+  if (!isa<BreakStmt>(S) || B->pred_empty())
+    return false;
+
+  assert(B->empty());
+  assert(B->pred_size() == 1);
+  return bodyEndsWithNoReturn(*B->pred_begin());
+}
+
+static bool isEnumConstant(const Expr *Ex) {
+  const DeclRefExpr *DR = dyn_cast<DeclRefExpr>(Ex);
+  if (!DR)
+    return false;
+  return isa<EnumConstantDecl>(DR->getDecl());
+}
+
+static const Expr *stripStdStringCtor(const Expr *Ex) {
+  // Go crazy pattern matching an implicit construction of std::string("").
+  const ExprWithCleanups *EWC = dyn_cast<ExprWithCleanups>(Ex);
+  if (!EWC)
+    return 0;
+  const CXXConstructExpr *CCE = dyn_cast<CXXConstructExpr>(EWC->getSubExpr());
+  if (!CCE)
+    return 0;
+  QualType Ty = CCE->getType();
+  if (const ElaboratedType *ET = dyn_cast<ElaboratedType>(Ty))
+    Ty = ET->getNamedType();
+  const TypedefType *TT = dyn_cast<TypedefType>(Ty);
+  StringRef Name = TT->getDecl()->getName();
+  if (Name != "string")
+    return 0;
+  if (CCE->getNumArgs() != 1)
+    return 0;
+  const MaterializeTemporaryExpr *MTE =
+    dyn_cast<MaterializeTemporaryExpr>(CCE->getArg(0));
+  if (!MTE)
+    return 0;
+  CXXBindTemporaryExpr *CBT =
+    dyn_cast<CXXBindTemporaryExpr>(MTE->GetTemporaryExpr()->IgnoreParenCasts());
+  if (!CBT)
+    return 0;
+  Ex = CBT->getSubExpr()->IgnoreParenCasts();
+  CCE = dyn_cast<CXXConstructExpr>(Ex);
+  if (!CCE)
+    return 0;
+  if (CCE->getNumArgs() != 1)
+    return 0;
+  return dyn_cast<StringLiteral>(CCE->getArg(0)->IgnoreParenCasts());
+}
+
+/// Strip away "sugar" around trivial expressions that are for the
+/// purpose of this analysis considered uninteresting for dead code warnings.
+static const Expr *stripExprSugar(const Expr *Ex) {
+  Ex = Ex->IgnoreParenCasts();
+  // If 'Ex' is a constructor for a std::string, strip that
+  // away.  We can only get here if the trivial expression was
+  // something like a C string literal, with the std::string
+  // just wrapping that value.
+  if (const Expr *StdStringVal = stripStdStringCtor(Ex))
+    return StdStringVal;
+  return Ex;
+}
+
+static bool isTrivialExpression(const Expr *Ex) {
+  Ex = Ex->IgnoreParenCasts();
+  return isa<IntegerLiteral>(Ex) || isa<StringLiteral>(Ex) ||
+         isa<CXXBoolLiteralExpr>(Ex) || isa<ObjCBoolLiteralExpr>(Ex) ||
+         isa<CharacterLiteral>(Ex) ||
+         isEnumConstant(Ex);
+}
+
+static bool isTrivialReturnOrDoWhile(const CFGBlock *B, const Stmt *S) {
+  const Expr *Ex = dyn_cast<Expr>(S);
+  if (!Ex)
+    return false;
+
+  if (!isTrivialExpression(Ex))
+    return false;
+
+  // Check if the block ends with a do...while() and see if 'S' is the
+  // condition.
+  if (const Stmt *Term = B->getTerminator()) {
+    if (const DoStmt *DS = dyn_cast<DoStmt>(Term))
+      if (DS->getCond() == S)
+        return true;
+  }
+
+  if (B->pred_size() != 1)
+    return false;
+
+  // Look to see if the block ends with a 'return', and see if 'S'
+  // is a substatement.  The 'return' may not be the last element in
+  // the block because of destructors.
+  assert(!B->empty());
+  for (CFGBlock::const_reverse_iterator I = B->rbegin(), E = B->rend();
+       I != E; ++I) {
+    if (Optional<CFGStmt> CS = I->getAs<CFGStmt>()) {
+      if (const ReturnStmt *RS = dyn_cast<ReturnStmt>(CS->getStmt())) {
+        const Expr *RE = RS->getRetValue();
+        if (RE && stripExprSugar(RE->IgnoreParenCasts()) == Ex)
+          return bodyEndsWithNoReturn(*B->pred_begin());
+      }
+      break;
+    }
+  }
+  return false;
+}
+
+/// Returns true if the statement is expanded from a configuration macro.
+static bool isExpandedFromConfigurationMacro(const Stmt *S) {
+  // FIXME: This is not very precise.  Here we just check to see if the
+  // value comes from a macro, but we can do much better.  This is likely
+  // to be over conservative.  This logic is factored into a separate function
+  // so that we can refine it later.
+  SourceLocation L = S->getLocStart();
+  return L.isMacroID();
+}
+
+/// Returns true if the statement represents a configuration value.
+///
+/// A configuration value is something usually determined at compile-time
+/// to conditionally always execute some branch.  Such guards are for
+/// "sometimes unreachable" code.  Such code is usually not interesting
+/// to report as unreachable, and may mask truly unreachable code within
+/// those blocks.
+static bool isConfigurationValue(const Stmt *S) {
+  if (!S)
+    return false;
+
+  if (const Expr *Ex = dyn_cast<Expr>(S))
+    S = Ex->IgnoreParenCasts();
+
+  switch (S->getStmtClass()) {
+    case Stmt::DeclRefExprClass: {
+      const DeclRefExpr *DR = cast<DeclRefExpr>(S);
+      const EnumConstantDecl *ED = dyn_cast<EnumConstantDecl>(DR->getDecl());
+      return ED ? isConfigurationValue(ED->getInitExpr()) : false;
+    }
+    case Stmt::IntegerLiteralClass:
+      return isExpandedFromConfigurationMacro(S);
+    case Stmt::UnaryExprOrTypeTraitExprClass:
+      return true;
+    case Stmt::BinaryOperatorClass: {
+      const BinaryOperator *B = cast<BinaryOperator>(S);
+      return (B->isLogicalOp() || B->isComparisonOp()) &&
+             (isConfigurationValue(B->getLHS()) ||
+              isConfigurationValue(B->getRHS()));
+    }
+    case Stmt::UnaryOperatorClass: {
+      const UnaryOperator *UO = cast<UnaryOperator>(S);
+      return UO->getOpcode() == UO_LNot &&
+             isConfigurationValue(UO->getSubExpr());
+    }
+    default:
+      return false;
+  }
+}
+
+/// Returns true if we should always explore all successors of a block.
+static bool shouldTreatSuccessorsAsReachable(const CFGBlock *B) {
+  if (const Stmt *Term = B->getTerminator()) {
+    if (isa<SwitchStmt>(Term))
+      return true;
+    // Specially handle '||' and '&&'.
+    if (isa<BinaryOperator>(Term))
+      return isConfigurationValue(Term);
+  }
+
+  return isConfigurationValue(B->getTerminatorCondition());
+}
+
+static unsigned scanFromBlock(const CFGBlock *Start,
+                              llvm::BitVector &Reachable,
+                              bool IncludeSometimesUnreachableEdges) {
+  unsigned count = 0;
+  
+  // Prep work queue
+  SmallVector<const CFGBlock*, 32> WL;
+  
+  // The entry block may have already been marked reachable
+  // by the caller.
+  if (!Reachable[Start->getBlockID()]) {
+    ++count;
+    Reachable[Start->getBlockID()] = true;
+  }
+  
+  WL.push_back(Start);
+  
+  // Find the reachable blocks from 'Start'.
+  while (!WL.empty()) {
+    const CFGBlock *item = WL.pop_back_val();
+
+    // There are cases where we want to treat all successors as reachable.
+    // The idea is that some "sometimes unreachable" code is not interesting,
+    // and that we should forge ahead and explore those branches anyway.
+    // This allows us to potentially uncover some "always unreachable" code
+    // within the "sometimes unreachable" code.
+    // Look at the successors and mark then reachable.
+    Optional<bool> TreatAllSuccessorsAsReachable;
+    if (!IncludeSometimesUnreachableEdges)
+      TreatAllSuccessorsAsReachable = false;
+
+    for (CFGBlock::const_succ_iterator I = item->succ_begin(), 
+         E = item->succ_end(); I != E; ++I) {
+      const CFGBlock *B = *I;
+      if (!B) do {
+        const CFGBlock *UB = I->getPossiblyUnreachableBlock();
+        if (!UB)
+          break;
+
+        if (!TreatAllSuccessorsAsReachable.hasValue())
+          TreatAllSuccessorsAsReachable =
+            shouldTreatSuccessorsAsReachable(item);
+
+        if (TreatAllSuccessorsAsReachable.getValue()) {
+          B = UB;
+          break;
+        }
+      }
+      while (false);
+
+      if (B) {
+        unsigned blockID = B->getBlockID();
+        if (!Reachable[blockID]) {
+          Reachable.set(blockID);
+          WL.push_back(B);
+          ++count;
+        }
+      }
+    }
+  }
+  return count;
+}
+
+static unsigned scanMaybeReachableFromBlock(const CFGBlock *Start,
+                                            llvm::BitVector &Reachable) {
+  return scanFromBlock(Start, Reachable, true);
+}
+
+//===----------------------------------------------------------------------===//
+// Dead Code Scanner.
+//===----------------------------------------------------------------------===//
+
+namespace {
+  class DeadCodeScan {
+    llvm::BitVector Visited;
+    llvm::BitVector &Reachable;
+    SmallVector<const CFGBlock *, 10> WorkList;
+
+    typedef SmallVector<std::pair<const CFGBlock *, const Stmt *>, 12>
+    DeferredLocsTy;
+
+    DeferredLocsTy DeferredLocs;
+
+  public:
+    DeadCodeScan(llvm::BitVector &reachable)
+    : Visited(reachable.size()),
+    Reachable(reachable) {}
+
+    void enqueue(const CFGBlock *block);
+    unsigned scanBackwards(const CFGBlock *Start,
+    clang::reachable_code::Callback &CB);
+
+    bool isDeadCodeRoot(const CFGBlock *Block);
+
+    const Stmt *findDeadCode(const CFGBlock *Block);
+
+    void reportDeadCode(const CFGBlock *B,
+    const Stmt *S,
+    clang::reachable_code::Callback &CB);
+    };
+}
+
+void DeadCodeScan::enqueue(const CFGBlock *block) {
   unsigned blockID = block->getBlockID();
   if (Reachable[blockID] || Visited[blockID])
     return;
@@ -64,9 +342,9 @@ void DeadCodeScan::enqueue(const CFGBlock *block) {
 
 bool DeadCodeScan::isDeadCodeRoot(const clang::CFGBlock *Block) {
   bool isDeadRoot = true;
-  
+
   for (CFGBlock::const_pred_iterator I = Block->pred_begin(),
-        E = Block->pred_end(); I != E; ++I) {
+       E = Block->pred_end(); I != E; ++I) {
     if (const CFGBlock *PredBlock = *I) {
       unsigned blockID = PredBlock->getBlockID();
       if (Visited[blockID]) {
@@ -81,7 +359,7 @@ bool DeadCodeScan::isDeadCodeRoot(const clang::CFGBlock *Block) {
       }
     }
   }
-  
+
   return isDeadRoot;
 }
 
@@ -100,11 +378,11 @@ const Stmt *DeadCodeScan::findDeadCode(const clang::CFGBlock *Block) {
       if (isValidDeadStmt(S))
         return S;
     }
-  
+
   if (CFGTerminator T = Block->getTerminator()) {
     const Stmt *S = T.getStmt();
     if (isValidDeadStmt(S))
-      return S;    
+      return S;
   }
 
   return 0;
@@ -124,7 +402,7 @@ unsigned DeadCodeScan::scanBackwards(const clang::CFGBlock *Start,
 
   unsigned count = 0;
   enqueue(Start);
-  
+
   while (!WorkList.empty()) {
     const CFGBlock *Block = WorkList.pop_back_val();
 
@@ -135,7 +413,7 @@ unsigned DeadCodeScan::scanBackwards(const clang::CFGBlock *Start,
 
     // Look for any dead code within the block.
     const Stmt *S = findDeadCode(Block);
-    
+
     if (!S) {
       // No dead code.  Possibly an empty block.  Look at dead predecessors.
       for (CFGBlock::const_pred_iterator I = Block->pred_begin(),
@@ -145,16 +423,16 @@ unsigned DeadCodeScan::scanBackwards(const clang::CFGBlock *Start,
       }
       continue;
     }
-    
+
     // Specially handle macro-expanded code.
     if (S->getLocStart().isMacroID()) {
-      count += clang::reachable_code::ScanReachableFromBlock(Block, Reachable);
+      count += scanMaybeReachableFromBlock(Block, Reachable);
       continue;
     }
 
     if (isDeadCodeRoot(Block)) {
-      reportDeadCode(S, CB);
-      count += clang::reachable_code::ScanReachableFromBlock(Block, Reachable);
+      reportDeadCode(Block, S, CB);
+      count += scanMaybeReachableFromBlock(Block, Reachable);
     }
     else {
       // Record this statement as the possibly best location in a
@@ -169,15 +447,15 @@ unsigned DeadCodeScan::scanBackwards(const clang::CFGBlock *Start,
   if (!DeferredLocs.empty()) {
     llvm::array_pod_sort(DeferredLocs.begin(), DeferredLocs.end(), SrcCmp);
     for (DeferredLocsTy::iterator I = DeferredLocs.begin(),
-          E = DeferredLocs.end(); I != E; ++I) {
-      const CFGBlock *block = I->first;
-      if (Reachable[block->getBlockID()])
+         E = DeferredLocs.end(); I != E; ++I) {
+      const CFGBlock *Block = I->first;
+      if (Reachable[Block->getBlockID()])
         continue;
-      reportDeadCode(I->second, CB);
-      count += clang::reachable_code::ScanReachableFromBlock(block, Reachable);
+      reportDeadCode(Block, I->second, CB);
+      count += scanMaybeReachableFromBlock(Block, Reachable);
     }
   }
-    
+
   return count;
 }
 
@@ -208,7 +486,7 @@ static SourceLocation GetUnreachableLoc(const Stmt *S,
     case Expr::BinaryConditionalOperatorClass:
     case Expr::ConditionalOperatorClass: {
       const AbstractConditionalOperator *CO =
-        cast<AbstractConditionalOperator>(S);
+      cast<AbstractConditionalOperator>(S);
       return CO->getQuestionLoc();
     }
     case Expr::MemberExprClass: {
@@ -246,52 +524,37 @@ static SourceLocation GetUnreachableLoc(const Stmt *S,
   return S->getLocStart();
 }
 
-void DeadCodeScan::reportDeadCode(const Stmt *S,
+void DeadCodeScan::reportDeadCode(const CFGBlock *B,
+                                  const Stmt *S,
                                   clang::reachable_code::Callback &CB) {
+  // Suppress idiomatic cases of calling a noreturn function just
+  // before executing a 'break'.  If there is other code after the 'break'
+  // in the block then don't suppress the warning.
+  if (isBreakPrecededByNoReturn(B, S))
+    return;
+
+  // Suppress trivial 'return' statements that are dead.
+  if (isTrivialReturnOrDoWhile(B, S))
+    return;
+
   SourceRange R1, R2;
   SourceLocation Loc = GetUnreachableLoc(S, R1, R2);
   CB.HandleUnreachable(Loc, R1, R2);
 }
 
+//===----------------------------------------------------------------------===//
+// Reachability APIs.
+//===----------------------------------------------------------------------===//
+
 namespace clang { namespace reachable_code {
 
-void Callback::anchor() { }  
+void Callback::anchor() { }
 
 unsigned ScanReachableFromBlock(const CFGBlock *Start,
                                 llvm::BitVector &Reachable) {
-  unsigned count = 0;
-  
-  // Prep work queue
-  SmallVector<const CFGBlock*, 32> WL;
-  
-  // The entry block may have already been marked reachable
-  // by the caller.
-  if (!Reachable[Start->getBlockID()]) {
-    ++count;
-    Reachable[Start->getBlockID()] = true;
-  }
-  
-  WL.push_back(Start);
-  
-  // Find the reachable blocks from 'Start'.
-  while (!WL.empty()) {
-    const CFGBlock *item = WL.pop_back_val();
-    
-    // Look at the successors and mark then reachable.
-    for (CFGBlock::const_succ_iterator I = item->succ_begin(), 
-         E = item->succ_end(); I != E; ++I)
-      if (const CFGBlock *B = *I) {
-        unsigned blockID = B->getBlockID();
-        if (!Reachable[blockID]) {
-          Reachable.set(blockID);
-          WL.push_back(B);
-          ++count;
-        }
-      }
-  }
-  return count;
+  return scanFromBlock(Start, Reachable, false);
 }
-  
+
 void FindUnreachableCode(AnalysisDeclContext &AC, Callback &CB) {
   CFG *cfg = AC.getCFG();
   if (!cfg)
@@ -300,7 +563,8 @@ void FindUnreachableCode(AnalysisDeclContext &AC, Callback &CB) {
   // Scan for reachable blocks from the entrance of the CFG.  
   // If there are no unreachable blocks, we're done.
   llvm::BitVector reachable(cfg->getNumBlockIDs());
-  unsigned numReachable = ScanReachableFromBlock(&cfg->getEntry(), reachable);
+  unsigned numReachable =
+    scanMaybeReachableFromBlock(&cfg->getEntry(), reachable);
   if (numReachable == cfg->getNumBlockIDs())
     return;
   
@@ -309,7 +573,7 @@ void FindUnreachableCode(AnalysisDeclContext &AC, Callback &CB) {
   if (!AC.getCFGBuildOptions().AddEHEdges) {
     for (CFG::try_block_iterator I = cfg->try_blocks_begin(),
          E = cfg->try_blocks_end() ; I != E; ++I) {
-      numReachable += ScanReachableFromBlock(*I, reachable);
+      numReachable += scanMaybeReachableFromBlock(*I, reachable);
     }
     if (numReachable == cfg->getNumBlockIDs())
       return;

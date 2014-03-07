@@ -1187,14 +1187,11 @@ Decl *TemplateDeclInstantiator::VisitCXXRecordDecl(CXXRecordDecl *D) {
   // DR1484 clarifies that the members of a local class are instantiated as part
   // of the instantiation of their enclosing entity.
   if (D->isCompleteDefinition() && D->isLocalClass()) {
-    if (SemaRef.InstantiateClass(D->getLocation(), Record, D, TemplateArgs,
-                                 TSK_ImplicitInstantiation,
-                                 /*Complain=*/true)) {
-      llvm_unreachable("InstantiateClass shouldn't fail here!");
-    } else {
-      SemaRef.InstantiateClassMembers(D->getLocation(), Record, TemplateArgs,
-                                      TSK_ImplicitInstantiation);
-    }
+    SemaRef.InstantiateClass(D->getLocation(), Record, D, TemplateArgs,
+                             TSK_ImplicitInstantiation,
+                             /*Complain=*/true);
+    SemaRef.InstantiateClassMembers(D->getLocation(), Record, TemplateArgs,
+                                    TSK_ImplicitInstantiation);
   }
   return Record;
 }
@@ -1453,10 +1450,8 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
       }
       // Check for redefinitions due to other instantiations of this or
       // a similar friend function.
-      else for (FunctionDecl::redecl_iterator R = Function->redecls_begin(),
-                                           REnd = Function->redecls_end();
-                R != REnd; ++R) {
-        if (*R == Function)
+      else for (auto R : Function->redecls()) {
+        if (R == Function)
           continue;
 
         // If some prior declaration of this function has been used, we need
@@ -3639,6 +3634,7 @@ void Sema::BuildVariableInstantiation(
 
   // Forward the mangling number from the template to the instantiated decl.
   Context.setManglingNumber(NewVar, Context.getManglingNumber(OldVar));
+  Context.setStaticLocalNumber(NewVar, Context.getStaticLocalNumber(OldVar));
 
   // Delay instantiation of the initializer for variable templates until a
   // definition of the variable is needed.

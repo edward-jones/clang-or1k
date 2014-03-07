@@ -77,6 +77,41 @@ that appears to be capable of returning to its caller.
   }];
 }
 
+def AssertCapabilityDocs : Documentation {
+  let Category = DocCatFunction;
+  let Heading = "assert_capability (assert_shared_capability, clang::assert_capability, clang::assert_shared_capability)";
+  let Content = [{
+Marks a function that dynamically tests whether a capability is held, and halts
+the program if it is not held.
+  }];
+}
+
+def AcquireCapabilityDocs : Documentation {
+  let Category = DocCatFunction;
+  let Heading = "acquire_capability (acquire_shared_capability, clang::acquire_capability, clang::acquire_shared_capability)";
+  let Content = [{
+Marks a function as acquiring a capability.
+  }];
+}
+
+def TryAcquireCapabilityDocs : Documentation {
+  let Category = DocCatFunction;
+  let Heading = "try_acquire_capability (try_acquire_shared_capability, clang::try_acquire_capability, clang::try_acquire_shared_capability)";
+  let Content = [{
+Marks a function that attempts to acquire a capability. This function may fail to
+actually acquire the capability; they accept a Boolean value determining
+whether acquiring the capability means success (true), or failing to acquire
+the capability means success (false).
+  }];
+}
+
+def ReleaseCapabilityDocs : Documentation {
+  let Category = DocCatFunction;
+  let Heading = "release_capability (release_shared_capability, clang::release_capability, clang::release_shared_capability)";
+  let Content = [{
+Marks a function as releasing a capability.
+  }];
+}
 def EnableIfDocs : Documentation {
   let Category = DocCatFunction;
   let Content = [{
@@ -265,6 +300,49 @@ use the retaining behavior attributes (``ns_returns_retained``,
 ``ns_returns_not_retained``, etc).
 
 Query for this feature with ``__has_attribute(objc_method_family)``.
+  }];
+}
+
+def NoDuplicateDocs : Documentation {
+  let Category = DocCatFunction;
+  let Content = [{
+The ``noduplicate`` attribute can be placed on function declarations to control
+whether function calls to this function can be duplicated or not as a result of
+optimizations. This is required for the implementation of functions with
+certain special requirements, like the OpenCL "barrier" function, that might
+need to be run concurrently by all the threads that are executing in lockstep
+on the hardware. For example this attribute applied on the function
+"nodupfunc" in the code below avoids that:
+
+.. code-block:: c
+
+  void nodupfunc() __attribute__((noduplicate));
+  // Setting it as a C++11 attribute is also valid
+  // void nodupfunc() [[clang::noduplicate]];
+  void foo();
+  void bar();
+
+  nodupfunc();
+  if (a > n) {
+    foo();
+  } else {
+    bar();
+  }
+
+gets possibly modified by some optimizations into code similar to this:
+
+.. code-block:: c
+
+  if (a > n) {
+    nodupfunc();
+    foo();
+  } else {
+    nodupfunc();
+    bar();
+  }
+
+where the call to "nodupfunc" is duplicated and sunk into the two branches
+of the condition.
   }];
 }
 
@@ -570,4 +648,298 @@ using the ``consumable`` attribute.  Failure to do so will result in a warning.
 This attribute accepts a single parameter that must be one of the following:
 ``unknown``, ``consumed``, or ``unconsumed``.
   }];
+}
+
+def NoSanitizeAddressDocs : Documentation {
+  let Category = DocCatFunction;
+  // This function has multiple distinct spellings, and so it requires a custom
+  // heading to be specified. The most common spelling is sufficient.
+  let Heading = "no_sanitize_address (no_address_safety_analysis, gnu::no_address_safety_analysis, gnu::no_sanitize_address)";
+  let Content = [{
+.. _langext-address_sanitizer:
+
+Use ``__attribute__((no_sanitize_address))`` on a function declaration to
+specify that address safety instrumentation (e.g. AddressSanitizer) should
+not be applied to that function.
+  }];
+}
+
+def NoSanitizeThreadDocs : Documentation {
+  let Category = DocCatFunction;
+  let Content = [{
+.. _langext-thread_sanitizer:
+
+Use ``__attribute__((no_sanitize_thread))`` on a function declaration to
+specify that checks for data races on plain (non-atomic) memory accesses should
+not be inserted by ThreadSanitizer. The function is still instrumented by the
+tool to avoid false positives and provide meaningful stack traces.
+  }];
+}
+
+def NoSanitizeMemoryDocs : Documentation {
+  let Category = DocCatFunction;
+  let Content = [{
+.. _langext-memory_sanitizer:
+
+Use ``__attribute__((no_sanitize_memory))`` on a function declaration to
+specify that checks for uninitialized memory should not be inserted 
+(e.g. by MemorySanitizer). The function may still be instrumented by the tool
+to avoid false positives in other places.
+  }];
+}
+
+def DocCatTypeSafety : DocumentationCategory<"Type Safety Checking"> {
+  let Content = [{
+Clang supports additional attributes to enable checking type safety properties
+that can't be enforced by the C type system.  Use cases include:
+
+* MPI library implementations, where these attributes enable checking that
+  the buffer type matches the passed ``MPI_Datatype``;
+* for HDF5 library there is a similar use case to MPI;
+* checking types of variadic functions' arguments for functions like
+  ``fcntl()`` and ``ioctl()``.
+
+You can detect support for these attributes with ``__has_attribute()``.  For
+example:
+
+.. code-block:: c++
+
+  #if defined(__has_attribute)
+  #  if __has_attribute(argument_with_type_tag) && \
+        __has_attribute(pointer_with_type_tag) && \
+        __has_attribute(type_tag_for_datatype)
+  #    define ATTR_MPI_PWT(buffer_idx, type_idx) __attribute__((pointer_with_type_tag(mpi,buffer_idx,type_idx)))
+  /* ... other macros ...  */
+  #  endif
+  #endif
+
+  #if !defined(ATTR_MPI_PWT)
+  # define ATTR_MPI_PWT(buffer_idx, type_idx)
+  #endif
+
+  int MPI_Send(void *buf, int count, MPI_Datatype datatype /*, other args omitted */)
+      ATTR_MPI_PWT(1,3);
+  }];
+}
+
+def ArgumentWithTypeTagDocs : Documentation {
+  let Category = DocCatTypeSafety;
+  let Heading = "argument_with_type_tag";
+  let Content = [{
+Use ``__attribute__((argument_with_type_tag(arg_kind, arg_idx,
+type_tag_idx)))`` on a function declaration to specify that the function
+accepts a type tag that determines the type of some other argument.
+``arg_kind`` is an identifier that should be used when annotating all
+applicable type tags.
+
+This attribute is primarily useful for checking arguments of variadic functions
+(``pointer_with_type_tag`` can be used in most non-variadic cases).
+
+For example:
+
+.. code-block:: c++
+
+  int fcntl(int fd, int cmd, ...)
+      __attribute__(( argument_with_type_tag(fcntl,3,2) ));
+  }];
+}
+
+def PointerWithTypeTagDocs : Documentation {
+  let Category = DocCatTypeSafety;
+  let Heading = "pointer_with_type_tag";
+  let Content = [{
+Use ``__attribute__((pointer_with_type_tag(ptr_kind, ptr_idx, type_tag_idx)))``
+on a function declaration to specify that the function accepts a type tag that
+determines the pointee type of some other pointer argument.
+
+For example:
+
+.. code-block:: c++
+
+  int MPI_Send(void *buf, int count, MPI_Datatype datatype /*, other args omitted */)
+      __attribute__(( pointer_with_type_tag(mpi,1,3) ));
+  }];
+}
+
+def TypeTagForDatatypeDocs : Documentation {
+  let Category = DocCatTypeSafety;
+  let Content = [{
+Clang supports annotating type tags of two forms.
+
+* **Type tag that is an expression containing a reference to some declared
+  identifier.** Use ``__attribute__((type_tag_for_datatype(kind, type)))`` on a
+  declaration with that identifier:
+
+  .. code-block:: c++
+
+    extern struct mpi_datatype mpi_datatype_int
+        __attribute__(( type_tag_for_datatype(mpi,int) ));
+    #define MPI_INT ((MPI_Datatype) &mpi_datatype_int)
+
+* **Type tag that is an integral literal.** Introduce a ``static const``
+  variable with a corresponding initializer value and attach
+  ``__attribute__((type_tag_for_datatype(kind, type)))`` on that declaration,
+  for example:
+
+  .. code-block:: c++
+
+    #define MPI_INT ((MPI_Datatype) 42)
+    static const MPI_Datatype mpi_datatype_int
+        __attribute__(( type_tag_for_datatype(mpi,int) )) = 42
+
+The attribute also accepts an optional third argument that determines how the
+expression is compared to the type tag.  There are two supported flags:
+
+* ``layout_compatible`` will cause types to be compared according to
+  layout-compatibility rules (C++11 [class.mem] p 17, 18).  This is
+  implemented to support annotating types like ``MPI_DOUBLE_INT``.
+
+  For example:
+
+  .. code-block:: c++
+
+    /* In mpi.h */
+    struct internal_mpi_double_int { double d; int i; };
+    extern struct mpi_datatype mpi_datatype_double_int
+        __attribute__(( type_tag_for_datatype(mpi, struct internal_mpi_double_int, layout_compatible) ));
+
+    #define MPI_DOUBLE_INT ((MPI_Datatype) &mpi_datatype_double_int)
+
+    /* In user code */
+    struct my_pair { double a; int b; };
+    struct my_pair *buffer;
+    MPI_Send(buffer, 1, MPI_DOUBLE_INT /*, ...  */); // no warning
+
+    struct my_int_pair { int a; int b; }
+    struct my_int_pair *buffer2;
+    MPI_Send(buffer2, 1, MPI_DOUBLE_INT /*, ...  */); // warning: actual buffer element
+                                                      // type 'struct my_int_pair'
+                                                      // doesn't match specified MPI_Datatype
+
+* ``must_be_null`` specifies that the expression should be a null pointer
+  constant, for example:
+
+  .. code-block:: c++
+
+    /* In mpi.h */
+    extern struct mpi_datatype mpi_datatype_null
+        __attribute__(( type_tag_for_datatype(mpi, void, must_be_null) ));
+
+    #define MPI_DATATYPE_NULL ((MPI_Datatype) &mpi_datatype_null)
+
+    /* In user code */
+    MPI_Send(buffer, 1, MPI_DATATYPE_NULL /*, ...  */); // warning: MPI_DATATYPE_NULL
+                                                        // was specified but buffer
+                                                        // is not a null pointer
+  }];
+}
+
+def FormatDocs : Documentation {
+  let Category = DocCatFunction;
+  let Content = [{
+
+Clang supports the ``format`` attribute, which indicates that the function
+accepts a ``printf`` or ``scanf``-like format string and corresponding
+arguments or a ``va_list`` that contains these arguments.
+
+Please see `GCC documentation about format attribute
+<http://gcc.gnu.org/onlinedocs/gcc/Function-Attributes.html>`_ to find details
+about attribute syntax.
+
+Clang implements two kinds of checks with this attribute.
+
+#. Clang checks that the function with the ``format`` attribute is called with
+   a format string that uses format specifiers that are allowed, and that
+   arguments match the format string.  This is the ``-Wformat`` warning, it is
+   on by default.
+
+#. Clang checks that the format string argument is a literal string.  This is
+   the ``-Wformat-nonliteral`` warning, it is off by default.
+
+   Clang implements this mostly the same way as GCC, but there is a difference
+   for functions that accept a ``va_list`` argument (for example, ``vprintf``).
+   GCC does not emit ``-Wformat-nonliteral`` warning for calls to such
+   fuctions.  Clang does not warn if the format string comes from a function
+   parameter, where the function is annotated with a compatible attribute,
+   otherwise it warns.  For example:
+
+   .. code-block:: c
+
+     __attribute__((__format__ (__scanf__, 1, 3)))
+     void foo(const char* s, char *buf, ...) {
+       va_list ap;
+       va_start(ap, buf);
+
+       vprintf(s, ap); // warning: format string is not a string literal
+     }
+
+   In this case we warn because ``s`` contains a format string for a
+   ``scanf``-like function, but it is passed to a ``printf``-like function.
+
+   If the attribute is removed, clang still warns, because the format string is
+   not a string literal.
+
+   Another example:
+
+   .. code-block:: c
+
+     __attribute__((__format__ (__printf__, 1, 3)))
+     void foo(const char* s, char *buf, ...) {
+       va_list ap;
+       va_start(ap, buf);
+
+       vprintf(s, ap); // warning
+     }
+
+   In this case Clang does not warn because the format string ``s`` and
+   the corresponding arguments are annotated.  If the arguments are
+   incorrect, the caller of ``foo`` will receive a warning.
+  }];
+}
+
+def MSInheritanceDocs : Documentation {
+  let Category = DocCatType;
+  let Heading = "__single_inhertiance, __multiple_inheritance, __virtual_inheritance";
+  let Content = [{
+This collection of keywords is enabled under ``-fms-extensions`` and controls
+the pointer-to-member representation used on ``*-*-win32`` targets.
+
+The ``*-*-win32`` targets utilize a pointer-to-member representation which
+varies in size and alignment depending on the definition of the underlying
+class.
+
+However, this is problematic when a forward declaration is only available and
+no definition has been made yet.  In such cases, Clang is forced to utilize the
+most general representation that is available to it.
+
+These keywords make it possible to use a pointer-to-member representation other
+than the most general one regardless of whether or not the definition will ever
+be present in the current translation unit.
+
+This family of keywords belong between the ``class-key`` and ``class-name``:
+
+.. code-block:: c++
+
+  struct __single_inheritance S;
+  int S::*i;
+  struct S {};
+
+This keyword can be applied to class templates but only has an effect when used
+on full specializations:
+
+.. code-block:: c++
+
+  template <typename T, typename U> struct __single_inheritance A; // warning: inheritance model ignored on primary template
+  template <typename T> struct __multiple_inheritance A<T, T>; // warning: inheritance model ignored on partial specialization
+  template <> struct __single_inheritance A<int, float>;
+
+Note that choosing an inheritance model less general than strictly necessary is
+an error:
+
+.. code-block:: c++
+
+  struct __multiple_inheritance S; // error: inheritance model does not match definition
+  int S::*i;
+  struct S {};
+}];
 }

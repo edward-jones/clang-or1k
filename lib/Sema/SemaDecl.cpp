@@ -1399,15 +1399,6 @@ void Sema::ActOnPopScope(SourceLocation Loc, Scope *S) {
   }
 }
 
-void Sema::ActOnStartFunctionDeclarator() {
-  ++InFunctionDeclarator;
-}
-
-void Sema::ActOnEndFunctionDeclarator() {
-  assert(InFunctionDeclarator);
-  --InFunctionDeclarator;
-}
-
 /// \brief Look for an Objective-C class in the translation unit.
 ///
 /// \param Id The name of the Objective-C class we're looking for. If
@@ -3166,7 +3157,7 @@ Decl *Sema::ParsedFreeStandingDeclSpec(Scope *S, AccessSpecifier AS,
   return ParsedFreeStandingDeclSpec(S, AS, DS, MultiTemplateParamsArg());
 }
 
-static void HandleTagNumbering(Sema &S, const TagDecl *Tag) {
+static void HandleTagNumbering(Sema &S, const TagDecl *Tag, Scope *TagScope) {
   if (!S.Context.getLangOpts().CPlusPlus)
     return;
 
@@ -3177,7 +3168,8 @@ static void HandleTagNumbering(Sema &S, const TagDecl *Tag) {
       return;
     MangleNumberingContext &MCtx =
         S.Context.getManglingNumberContext(Tag->getParent());
-    S.Context.setManglingNumber(Tag, MCtx.getManglingNumber(Tag));
+    S.Context.setManglingNumber(
+        Tag, MCtx.getManglingNumber(Tag, TagScope->getMSLocalManglingNumber()));
     return;
   }
 
@@ -3186,7 +3178,9 @@ static void HandleTagNumbering(Sema &S, const TagDecl *Tag) {
   if (MangleNumberingContext *MCtx =
           S.getCurrentMangleNumberContext(Tag->getDeclContext(),
                                           ManglingContextDecl)) {
-    S.Context.setManglingNumber(Tag, MCtx->getManglingNumber(Tag));
+    S.Context.setManglingNumber(
+        Tag,
+        MCtx->getManglingNumber(Tag, TagScope->getMSLocalManglingNumber()));
   }
 }
 
@@ -3219,7 +3213,7 @@ Decl *Sema::ParsedFreeStandingDeclSpec(Scope *S, AccessSpecifier AS,
   }
 
   if (Tag) {
-    HandleTagNumbering(*this, Tag);
+    HandleTagNumbering(*this, Tag, S);
     Tag->setFreeStanding();
     if (Tag->isInvalidDecl())
       return Tag;
@@ -3818,6 +3812,18 @@ Decl *Sema::BuildAnonymousStructOrUnion(Scope *S, DeclSpec &DS,
   if (InjectAnonymousStructOrUnionMembers(*this, S, Owner, Record, AS,
                                           Chain, false))
     Invalid = true;
+
+  if (VarDecl *NewVD = dyn_cast<VarDecl>(Anon)) {
+    if (getLangOpts().CPlusPlus && NewVD->isStaticLocal()) {
+      Decl *ManglingContextDecl;
+      if (MangleNumberingContext *MCtx =
+              getCurrentMangleNumberContext(NewVD->getDeclContext(),
+                                            ManglingContextDecl)) {
+        Context.setManglingNumber(NewVD, MCtx->getManglingNumber(NewVD, S->getMSLocalManglingNumber()));
+        Context.setStaticLocalNumber(NewVD, MCtx->getStaticLocalNumber(NewVD));
+      }
+    }
+  }
 
   if (Invalid)
     Anon->setInvalidDecl();
@@ -4986,12 +4992,25 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   bool IsLocalExternDecl = SC == SC_Extern &&
                            adjustContextForLocalExternDecl(DC);
 
-  if (getLangOpts().OpenCL && !getOpenCLOptions().cl_khr_fp16) {
-    // OpenCL v1.2 s6.1.1.1: reject declaring variables of the half and
-    // half array type (unless the cl_khr_fp16 extension is enabled).
-    if (Context.getBaseElementType(R)->isHalfType()) {
-      Diag(D.getIdentifierLoc(), diag::err_opencl_half_declaration) << R;
-      D.setInvalidType();
+  if (getLangOpts().OpenCL) {
+    // OpenCL v1.0 s6.8.a.3: Pointers to functions are not allowed.
+    QualType NR = R;
+    while (NR->isPointerType()) {
+      if (NR->isFunctionPointerType()) {
+        Diag(D.getIdentifierLoc(), diag::err_opencl_function_pointer_variable);
+        D.setInvalidType();
+        break;
+      }
+      NR = NR->getPointeeType();
+    }
+
+    if (!getOpenCLOptions().cl_khr_fp16) {
+      // OpenCL v1.2 s6.1.1.1: reject declaring variables of the half and
+      // half array type (unless the cl_khr_fp16 extension is enabled).
+      if (Context.getBaseElementType(R)->isHalfType()) {
+        Diag(D.getIdentifierLoc(), diag::err_opencl_half_declaration) << R;
+        D.setInvalidType();
+      }
     }
   }
 
@@ -5466,7 +5485,9 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     if (MangleNumberingContext *MCtx =
             getCurrentMangleNumberContext(NewVD->getDeclContext(),
                                           ManglingContextDecl)) {
-      Context.setManglingNumber(NewVD, MCtx->getManglingNumber(NewVD));
+      Context.setManglingNumber(
+          NewVD, MCtx->getManglingNumber(NewVD, S->getMSLocalManglingNumber()));
+      Context.setStaticLocalNumber(NewVD, MCtx->getStaticLocalNumber(NewVD));
     }
   }
 
@@ -5519,11 +5540,9 @@ void Sema::CheckShadow(Scope *S, VarDecl *D, const LookupResult& R) {
     if (shadowedVar->isExternC()) {
       // For shadowing external vars, make sure that we point to the global
       // declaration, not a locally scoped extern declaration.
-      for (VarDecl::redecl_iterator
-             I = shadowedVar->redecls_begin(), E = shadowedVar->redecls_end();
-           I != E; ++I)
+      for (auto I : shadowedVar->redecls())
         if (I->isFileVarDecl()) {
-          ShadowedDecl = *I;
+          ShadowedDecl = I;
           break;
         }
     }
@@ -6286,15 +6305,6 @@ static FunctionDecl* CreateNewFunctionDecl(Sema &SemaRef, Declarator &D,
         SemaRef.AdjustDestructorExceptionSpec(Record, NewDD);
       }
 
-      // The Microsoft ABI requires that we perform the destructor body
-      // checks (i.e. operator delete() lookup) at every declaration, as
-      // any translation unit may need to emit a deleting destructor.
-      if (SemaRef.Context.getTargetInfo().getCXXABI().isMicrosoft() &&
-          !Record->isDependentType() && Record->getDefinition() &&
-          !Record->isBeingDefined() && !NewDD->isDeleted()) {
-        SemaRef.CheckDestructor(NewDD);
-      }
-
       IsVirtualOkay = true;
       return NewDD;
 
@@ -6895,13 +6905,13 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     // single void argument.
     // We let through "const void" here because Sema::GetTypeForDeclarator
     // already checks for that case.
-    if (FTI.NumArgs == 1 && !FTI.isVariadic && FTI.ArgInfo[0].Ident == 0 &&
-        FTI.ArgInfo[0].Param &&
-        cast<ParmVarDecl>(FTI.ArgInfo[0].Param)->getType()->isVoidType()) {
+    if (FTI.NumParams == 1 && !FTI.isVariadic && FTI.Params[0].Ident == 0 &&
+        FTI.Params[0].Param &&
+        cast<ParmVarDecl>(FTI.Params[0].Param)->getType()->isVoidType()) {
       // Empty arg list, don't push any params.
-    } else if (FTI.NumArgs > 0 && FTI.ArgInfo[0].Param != 0) {
-      for (unsigned i = 0, e = FTI.NumArgs; i != e; ++i) {
-        ParmVarDecl *Param = cast<ParmVarDecl>(FTI.ArgInfo[i].Param);
+    } else if (FTI.NumParams > 0 && FTI.Params[0].Param != 0) {
+      for (unsigned i = 0, e = FTI.NumParams; i != e; ++i) {
+        ParmVarDecl *Param = cast<ParmVarDecl>(FTI.Params[i].Param);
         assert(Param->getDeclContext() != NewFD && "Was set before ?");
         Param->setDeclContext(NewFD);
         Params.push_back(Param);
@@ -8128,6 +8138,13 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
       return;
   }
 
+  // dllimport cannot be used on variable definitions.
+  if (VDecl->hasAttr<DLLImportAttr>() && !VDecl->isStaticDataMember()) {
+    Diag(VDecl->getLocation(), diag::err_attribute_dllimport_data_definition);
+    VDecl->setInvalidDecl();
+    return;
+  }
+
   if (VDecl->isLocalVarDecl() && VDecl->hasExternalStorage()) {
     // C99 6.7.8p5. C++ has no such restriction, but that is a defect.
     Diag(VDecl->getLocation(), diag::err_block_extern_cant_init);
@@ -8988,7 +9005,7 @@ Sema::DeclGroupPtrTy Sema::FinalizeDeclaratorGroup(Scope *S, const DeclSpec &DS,
 
   if (DeclSpec::isDeclRep(DS.getTypeSpecType())) {
     if (TagDecl *Tag = dyn_cast_or_null<TagDecl>(DS.getRepAsDecl())) {
-      HandleTagNumbering(*this, Tag);
+      HandleTagNumbering(*this, Tag, S);
       if (!Tag->hasNameForLinkage() && !Tag->hasDeclaratorForAnonDecl())
         Tag->setDeclaratorForAnonDecl(FirstDeclaratorInGroup);
     }
@@ -9338,16 +9355,15 @@ void Sema::ActOnFinishKNRParamDeclarations(Scope *S, Declarator &D,
   // Verify 6.9.1p6: 'every identifier in the identifier list shall be declared'
   // for a K&R function.
   if (!FTI.hasPrototype) {
-    for (int i = FTI.NumArgs; i != 0; /* decrement in loop */) {
+    for (int i = FTI.NumParams; i != 0; /* decrement in loop */) {
       --i;
-      if (FTI.ArgInfo[i].Param == 0) {
+      if (FTI.Params[i].Param == 0) {
         SmallString<256> Code;
-        llvm::raw_svector_ostream(Code) << "  int "
-                                        << FTI.ArgInfo[i].Ident->getName()
-                                        << ";\n";
-        Diag(FTI.ArgInfo[i].IdentLoc, diag::ext_param_not_declared)
-          << FTI.ArgInfo[i].Ident
-          << FixItHint::CreateInsertion(LocAfterDecls, Code.str());
+        llvm::raw_svector_ostream(Code)
+            << "  int " << FTI.Params[i].Ident->getName() << ";\n";
+        Diag(FTI.Params[i].IdentLoc, diag::ext_param_not_declared)
+            << FTI.Params[i].Ident
+            << FixItHint::CreateInsertion(LocAfterDecls, Code.str());
 
         // Implicitly declare the argument as type 'int' for lack of a better
         // type.
@@ -9355,14 +9371,14 @@ void Sema::ActOnFinishKNRParamDeclarations(Scope *S, Declarator &D,
         DeclSpec DS(attrs);
         const char* PrevSpec; // unused
         unsigned DiagID; // unused
-        DS.SetTypeSpecType(DeclSpec::TST_int, FTI.ArgInfo[i].IdentLoc,
-                           PrevSpec, DiagID, Context.getPrintingPolicy());
+        DS.SetTypeSpecType(DeclSpec::TST_int, FTI.Params[i].IdentLoc, PrevSpec,
+                           DiagID, Context.getPrintingPolicy());
         // Use the identifier location for the type source range.
-        DS.SetRangeStart(FTI.ArgInfo[i].IdentLoc);
-        DS.SetRangeEnd(FTI.ArgInfo[i].IdentLoc);
+        DS.SetRangeStart(FTI.Params[i].IdentLoc);
+        DS.SetRangeEnd(FTI.Params[i].IdentLoc);
         Declarator ParamD(DS, Declarator::KNRTypeListContext);
-        ParamD.SetIdentifier(FTI.ArgInfo[i].Ident, FTI.ArgInfo[i].IdentLoc);
-        FTI.ArgInfo[i].Param = ActOnParamDeclarator(S, ParamD);
+        ParamD.SetIdentifier(FTI.Params[i].Ident, FTI.Params[i].IdentLoc);
+        FTI.Params[i].Param = ActOnParamDeclarator(S, ParamD);
       }
     }
   }
@@ -10312,8 +10328,7 @@ bool Sema::isAcceptableTagRedeclaration(const TagDecl *Previous,
       }
 
       bool previousMismatch = false;
-      for (TagDecl::redecl_iterator I(Previous->redecls_begin()),
-           E(Previous->redecls_end()); I != E; ++I) {
+      for (auto I : Previous->redecls()) {
         if (I->getTagKind() != NewTag) {
           if (!previousMismatch) {
             previousMismatch = true;
@@ -11058,10 +11073,14 @@ CreateNewDecl:
   if (Attr)
     ProcessDeclAttributeList(S, New, Attr);
 
-  // If we're declaring or defining a tag in function prototype scope
-  // in C, note that this type can only be used within the function.
-  if (Name && S->isFunctionPrototypeScope() && !getLangOpts().CPlusPlus)
+  // If we're declaring or defining a tag in function prototype scope in C,
+  // note that this type can only be used within the function and add it to
+  // the list of decls to inject into the function definition scope.
+  if (!getLangOpts().CPlusPlus && (Name || Kind == TTK_Enum) &&
+      getNonFieldDeclScope(S)->isFunctionPrototypeScope()) {
     Diag(Loc, diag::warn_decl_in_param_list) << Context.getTagDeclType(New);
+    DeclsInPrototypeScope.push_back(New);
+  }
 
   // Set the lexical context. If the tag has a C++ scope specifier, the
   // lexical context will be different from the semantic context.
@@ -11110,12 +11129,6 @@ CreateNewDecl:
         New->getDeclContext()->getRedeclContext()->isTranslationUnit() &&
         II->isStr("FILE"))
       Context.setFILEDecl(New);
-
-  // If we were in function prototype scope (and not in C++ mode), add this
-  // tag to the list of decls to inject into the function definition scope.
-  if (S->isFunctionPrototypeScope() && !getLangOpts().CPlusPlus &&
-      InFunctionDeclarator && Name)
-    DeclsInPrototypeScope.push_back(New);
 
   if (PrevDecl)
     mergeDeclAttributes(New, PrevDecl);
@@ -12436,7 +12449,7 @@ EnumConstantDecl *Sema::CheckEnumConstant(EnumDecl *Enum,
               << EnumVal.toString(10)
               << EltTy;
           else
-            Diag(IdLoc, diag::warn_enumerator_too_large)
+            Diag(IdLoc, diag::ext_enumerator_increment_too_large)
               << EnumVal.toString(10);
         } else {
           EltTy = T;
@@ -12834,7 +12847,7 @@ void Sema::ActOnEnumBody(SourceLocation EnumLoc, SourceLocation LBraceLoc,
         BestWidth = Context.getTargetInfo().getLongLongWidth();
 
         if (NumNegativeBits > BestWidth || NumPositiveBits >= BestWidth)
-          Diag(Enum->getLocation(), diag::warn_enum_too_large);
+          Diag(Enum->getLocation(), diag::ext_enum_too_large);
         BestType = Context.LongLongTy;
       }
     }
@@ -12939,11 +12952,6 @@ void Sema::ActOnEnumBody(SourceLocation EnumLoc, SourceLocation LBraceLoc,
   Enum->completeDefinition(BestType, BestPromotionType,
                            NumPositiveBits, NumNegativeBits);
 
-  // If we're declaring a function, ensure this decl isn't forgotten about -
-  // it needs to go into the function scope.
-  if (InFunctionDeclarator)
-    DeclsInPrototypeScope.push_back(Enum);
-
   CheckForDuplicateEnumValues(*this, Elements, Enum, EnumType);
 
   // Now that the enum type is defined, ensure it's not been underaligned.
@@ -12963,6 +12971,36 @@ Decl *Sema::ActOnFileScopeAsmDecl(Expr *expr,
   return New;
 }
 
+static void checkModuleImportContext(Sema &S, Module *M,
+                                     SourceLocation ImportLoc,
+                                     DeclContext *DC) {
+  if (auto *LSD = dyn_cast<LinkageSpecDecl>(DC)) {
+    switch (LSD->getLanguage()) {
+    case LinkageSpecDecl::lang_c:
+      if (!M->IsExternC) {
+        S.Diag(ImportLoc, diag::err_module_import_in_extern_c)
+          << M->getFullModuleName();
+        S.Diag(LSD->getLocStart(), diag::note_module_import_in_extern_c);
+        return;
+      }
+      break;
+    case LinkageSpecDecl::lang_cxx:
+      break;
+    }
+    DC = LSD->getParent();
+  }
+
+  while (isa<LinkageSpecDecl>(DC))
+    DC = DC->getParent();
+  if (!isa<TranslationUnitDecl>(DC)) {
+    S.Diag(ImportLoc, diag::err_module_import_not_at_top_level)
+      << M->getFullModuleName() << DC;
+    S.Diag(cast<Decl>(DC)->getLocStart(),
+           diag::note_module_import_not_at_top_level)
+      << DC;
+  }
+}
+
 DeclResult Sema::ActOnModuleImport(SourceLocation AtLoc, 
                                    SourceLocation ImportLoc, 
                                    ModuleIdPath Path) {
@@ -12971,7 +13009,9 @@ DeclResult Sema::ActOnModuleImport(SourceLocation AtLoc,
                                                 /*IsIncludeDirective=*/false);
   if (!Mod)
     return true;
-  
+
+  checkModuleImportContext(*this, Mod, ImportLoc, CurContext);
+
   SmallVector<SourceLocation, 2> IdentifierLocs;
   Module *ModCheck = Mod;
   for (unsigned I = 0, N = Path.size(); I != N; ++I) {
@@ -12993,6 +13033,8 @@ DeclResult Sema::ActOnModuleImport(SourceLocation AtLoc,
 }
 
 void Sema::ActOnModuleInclude(SourceLocation DirectiveLoc, Module *Mod) {
+  checkModuleImportContext(*this, Mod, DirectiveLoc, CurContext);
+
   // FIXME: Should we synthesize an ImportDecl here?
   PP.getModuleLoader().makeModuleVisible(Mod, Module::AllVisible, DirectiveLoc,
                                          /*Complain=*/true);

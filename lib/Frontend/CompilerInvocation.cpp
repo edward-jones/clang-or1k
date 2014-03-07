@@ -28,13 +28,13 @@
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/OptTable.h"
 #include "llvm/Option/Option.h"
-#include "llvm/Support/Atomic.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/system_error.h"
+#include <atomic>
 #include <sys/stat.h>
 using namespace clang;
 
@@ -263,7 +263,7 @@ static bool ParseAnalyzerArgs(AnalyzerOptions &Opts, ArgList &Args,
     configList.split(configVals, ",");
     for (unsigned i = 0, e = configVals.size(); i != e; ++i) {
       StringRef key, val;
-      llvm::tie(key, val) = configVals[i].split("=");
+      std::tie(key, val) = configVals[i].split("=");
       if (val.empty()) {
         Diags.Report(SourceLocation(),
                      diag::err_analyzer_config_no_value) << configVals[i];
@@ -366,6 +366,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
                    (Opts.OptimizationLevel > 1 && !Opts.OptimizeSize));
   Opts.RerollLoops = Args.hasArg(OPT_freroll_loops);
 
+  Opts.DisableIntegratedAS = Args.hasArg(OPT_fno_integrated_as);
   Opts.Autolink = !Args.hasArg(OPT_fno_autolink);
   Opts.SampleProfileFile = Args.getLastArgValue(OPT_fprofile_sample_use_EQ);
   Opts.ProfileInstrGenerate = Args.hasArg(OPT_fprofile_instr_generate);
@@ -917,6 +918,7 @@ static void ParseHeaderSearchArgs(HeaderSearchOptions &Opts, ArgList &Args) {
     Opts.UseLibcxx = (strcmp(A->getValue(), "libc++") == 0);
   Opts.ResourceDir = Args.getLastArgValue(OPT_resource_dir);
   Opts.ModuleCachePath = Args.getLastArgValue(OPT_fmodules_cache_path);
+  Opts.ModuleUserBuildPath = Args.getLastArgValue(OPT_fmodules_user_build_path);
   Opts.DisableModuleHash = Args.hasArg(OPT_fdisable_module_hash);
   // -fmodules implies -fmodule-maps
   Opts.ModuleMaps = Args.hasArg(OPT_fmodule_maps) || Args.hasArg(OPT_fmodules);
@@ -1019,6 +1021,10 @@ static void ParseHeaderSearchArgs(HeaderSearchOptions &Opts, ArgList &Args) {
        I != E; ++I)
     Opts.AddSystemHeaderPrefix((*I)->getValue(),
                                (*I)->getOption().matches(OPT_isystem_prefix));
+
+  for (arg_iterator I = Args.filtered_begin(OPT_ivfsoverlay),
+       E = Args.filtered_end(); I != E; ++I)
+    Opts.AddVFSOverlayFile((*I)->getValue());
 }
 
 void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
@@ -1332,7 +1338,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.ModulesDeclUse = Args.hasArg(OPT_fmodules_decluse);
   Opts.CharIsSigned = Opts.OpenCL || !Args.hasArg(OPT_fno_signed_char);
   Opts.WChar = Opts.CPlusPlus && !Args.hasArg(OPT_fno_wchar);
-  Opts.ShortWChar = Args.hasArg(OPT_fshort_wchar);
+  Opts.ShortWChar = Args.hasFlag(OPT_fshort_wchar, OPT_fno_short_wchar, false);
   Opts.ShortEnums = Args.hasArg(OPT_fshort_enums);
   Opts.Freestanding = Args.hasArg(OPT_ffreestanding);
   Opts.NoBuiltin = Args.hasArg(OPT_fno_builtin) || Opts.Freestanding;
@@ -1425,8 +1431,12 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
     Opts.setMSPointerToMemberRepresentationMethod(InheritanceModel);
   }
 
-  // Check if -fopenmp is specified.
-  Opts.OpenMP = Args.hasArg(OPT_fopenmp);
+  // Check if -fopenmp= is specified.
+  if (const Arg *A = Args.getLastArg(options::OPT_fopenmp_EQ)) {
+    Opts.OpenMP = llvm::StringSwitch<bool>(A->getValue())
+        .Case("libiomp5", true)
+        .Default(false);
+  }
 
   // Record whether the __DEPRECATED define was requested.
   Opts.Deprecated = Args.hasFlag(OPT_fdeprecated_macro,
@@ -1816,6 +1826,9 @@ std::string CompilerInvocation::getModuleHash() const {
                       hsOpts.UseStandardCXXIncludes,
                       hsOpts.UseLibcxx);
 
+  // Extend the signature with the user build path.
+  code = hash_combine(code, hsOpts.ModuleUserBuildPath);
+
   // Darwin-specific hack: if we have a sysroot, use the contents and
   // modification time of
   //   $sysroot/System/Library/CoreServices/SystemVersion.plist
@@ -1878,8 +1891,8 @@ void BuryPointer(const void *Ptr) {
   // is what we want in such case.
   static const size_t kGraveYardMaxSize = 16;
   LLVM_ATTRIBUTE_UNUSED static const void *GraveYard[kGraveYardMaxSize];
-  static llvm::sys::cas_flag GraveYardSize;
-  llvm::sys::cas_flag Idx = llvm::sys::AtomicIncrement(&GraveYardSize) - 1;
+  static std::atomic<unsigned> GraveYardSize;
+  unsigned Idx = GraveYardSize++;
   if (Idx >= kGraveYardMaxSize)
     return;
   GraveYard[Idx] = Ptr;

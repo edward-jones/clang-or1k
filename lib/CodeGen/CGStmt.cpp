@@ -20,10 +20,10 @@
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Sema/SemaDiagnostic.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/IR/CallSite.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/Support/CallSite.h"
 using namespace clang;
 using namespace CodeGen;
 
@@ -77,6 +77,7 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
   case Stmt::SEHFinallyStmtClass:
   case Stmt::MSDependentExistsStmtClass:
   case Stmt::OMPParallelDirectiveClass:
+  case Stmt::OMPSimdDirectiveClass:
     llvm_unreachable("invalid statement class to emit generically");
   case Stmt::NullStmtClass:
   case Stmt::CompoundStmtClass:

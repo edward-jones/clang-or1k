@@ -2307,8 +2307,12 @@ public:
                                    bool isImplicitlyDeclared);
   static CXXDestructorDecl *CreateDeserialized(ASTContext & C, unsigned ID);
 
-  void setOperatorDelete(FunctionDecl *OD) { OperatorDelete = OD; }
-  const FunctionDecl *getOperatorDelete() const { return OperatorDelete; }
+  void setOperatorDelete(FunctionDecl *OD) {
+    cast<CXXDestructorDecl>(getFirstDecl())->OperatorDelete = OD;
+  }
+  const FunctionDecl *getOperatorDelete() const {
+    return cast<CXXDestructorDecl>(getFirstDecl())->OperatorDelete;
+  }
 
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
@@ -2724,9 +2728,11 @@ public:
 
   static UsingShadowDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
+  typedef redeclarable_base::redecl_range redecl_range;
   typedef redeclarable_base::redecl_iterator redecl_iterator;
   using redeclarable_base::redecls_begin;
   using redeclarable_base::redecls_end;
+  using redeclarable_base::redecls;
   using redeclarable_base::getPreviousDecl;
   using redeclarable_base::getMostRecentDecl;
 

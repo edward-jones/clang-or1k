@@ -101,11 +101,18 @@ static const NamedDecl *getStructor(const NamedDecl *decl) {
   const FunctionDecl *fn = dyn_cast_or_null<FunctionDecl>(decl);
   return (fn ? getStructor(fn) : decl);
 }
-                                                    
+
+static bool isLambda(const NamedDecl *ND) {
+  const CXXRecordDecl *Record = dyn_cast<CXXRecordDecl>(ND);
+  if (!Record)
+    return false;
+
+  return Record->isLambda();
+}
+
 static const unsigned UnknownArity = ~0U;
 
 class ItaniumMangleContextImpl : public ItaniumMangleContext {
-  llvm::DenseMap<const TagDecl *, uint64_t> AnonStructIds;
   typedef std::pair<const DeclContext*, IdentifierInfo*> DiscriminatorKeyTy;
   llvm::DenseMap<DiscriminatorKeyTy, unsigned> Discriminator;
   llvm::DenseMap<const NamedDecl*, unsigned> Uniquifier;
@@ -114,13 +121,6 @@ public:
   explicit ItaniumMangleContextImpl(ASTContext &Context,
                                     DiagnosticsEngine &Diags)
       : ItaniumMangleContext(Context, Diags) {}
-
-  uint64_t getAnonymousStructId(const TagDecl *TD) {
-    std::pair<llvm::DenseMap<const TagDecl *,
-      uint64_t>::iterator, bool> Result =
-      AnonStructIds.insert(std::make_pair(TD, AnonStructIds.size()));
-    return Result.first->second;
-  }
 
   /// @name Mangler Entry Points
   /// @{
@@ -158,9 +158,8 @@ public:
 
   bool getNextDiscriminator(const NamedDecl *ND, unsigned &disc) {
     // Lambda closure types are already numbered.
-    if (const CXXRecordDecl *RD = dyn_cast<CXXRecordDecl>(ND))
-      if (RD->isLambda())
-        return false;
+    if (isLambda(ND))
+      return false;
 
     // Anonymous tags are already numbered.
     if (const TagDecl *Tag = dyn_cast<TagDecl>(ND)) {
@@ -536,14 +535,6 @@ isTemplate(const NamedDecl *ND, const TemplateArgumentList *&TemplateArgs) {
   }
 
   return 0;
-}
-
-static bool isLambda(const NamedDecl *ND) {
-  const CXXRecordDecl *Record = dyn_cast<CXXRecordDecl>(ND);
-  if (!Record)
-    return false;
-  
-  return Record->isLambda();
 }
 
 void CXXNameMangler::mangleName(const NamedDecl *ND) {
@@ -1149,7 +1140,7 @@ void CXXNameMangler::mangleUnqualifiedName(const NamedDecl *ND,
     }
 
     // Get a unique id for the anonymous struct.
-    uint64_t AnonStructId = Context.getAnonymousStructId(TD);
+    unsigned AnonStructId = Context.getAnonymousStructId(TD);
 
     // Mangle it as a source name in the form
     // [n] $_<id>
@@ -2203,7 +2194,7 @@ static StringRef mangleAArch64VectorBase(const BuiltinType *EltType) {
     return "Int16";
   case BuiltinType::Int:
     return "Int32";
-  case BuiltinType::LongLong:
+  case BuiltinType::Long:
     return "Int64";
   case BuiltinType::UChar:
     return "Uint8";
@@ -2211,7 +2202,7 @@ static StringRef mangleAArch64VectorBase(const BuiltinType *EltType) {
     return "Uint16";
   case BuiltinType::UInt:
     return "Uint32";
-  case BuiltinType::ULongLong:
+  case BuiltinType::ULong:
     return "Uint64";
   case BuiltinType::Half:
     return "Float16";
@@ -2246,7 +2237,7 @@ void CXXNameMangler::mangleAArch64NeonVectorType(const VectorType *T) {
     case BuiltinType::UShort:
       EltName = "Poly16";
       break;
-    case BuiltinType::ULongLong:
+    case BuiltinType::ULong:
       EltName = "Poly64";
       break;
     default:
@@ -2271,8 +2262,10 @@ void CXXNameMangler::mangleAArch64NeonVectorType(const VectorType *T) {
 void CXXNameMangler::mangleType(const VectorType *T) {
   if ((T->getVectorKind() == VectorType::NeonVector ||
        T->getVectorKind() == VectorType::NeonPolyVector)) {
-    if (getASTContext().getTargetInfo().getTriple().getArch() ==
-        llvm::Triple::aarch64)
+    llvm::Triple::ArchType Arch =
+        getASTContext().getTargetInfo().getTriple().getArch();
+    if ((Arch == llvm::Triple::aarch64) ||
+        (Arch == llvm::Triple::aarch64_be))
       mangleAArch64NeonVectorType(T);
     else
       mangleNeonVectorType(T);

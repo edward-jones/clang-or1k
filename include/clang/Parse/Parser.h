@@ -40,7 +40,6 @@ namespace clang {
   class ParsingDeclSpec;
   class ParsingDeclarator;
   class ParsingFieldDeclarator;
-  class PragmaUnusedHandler;
   class ColonProtectionRAIIObject;
   class InMessageExpressionRAIIObject;
   class PoisonSEHIdentifiersRAIIObject;
@@ -52,7 +51,6 @@ namespace clang {
 /// been read.
 ///
 class Parser : public CodeCompletionHandler {
-  friend class PragmaUnusedHandler;
   friend class ColonProtectionRAIIObject;
   friend class InMessageExpressionRAIIObject;
   friend class PoisonSEHIdentifiersRAIIObject;
@@ -151,12 +149,13 @@ class Parser : public CodeCompletionHandler {
   OwningPtr<PragmaHandler> RedefineExtnameHandler;
   OwningPtr<PragmaHandler> FPContractHandler;
   OwningPtr<PragmaHandler> OpenCLExtensionHandler;
-  OwningPtr<CommentHandler> CommentSemaHandler;
   OwningPtr<PragmaHandler> OpenMPHandler;
   OwningPtr<PragmaHandler> MSCommentHandler;
   OwningPtr<PragmaHandler> MSDetectMismatchHandler;
   OwningPtr<PragmaHandler> MSPointersToMembers;
   OwningPtr<PragmaHandler> MSVtorDisp;
+
+  OwningPtr<CommentHandler> CommentSemaHandler;
 
   /// Whether the '>' token acts as an operator or not. This will be
   /// true except when we are parsing an expression within a C++
@@ -170,7 +169,7 @@ class Parser : public CodeCompletionHandler {
   /// ColonProtectionRAIIObject RAII object.
   bool ColonIsSacred;
 
-  /// \brief When true, we are directly inside an Objective-C messsage
+  /// \brief When true, we are directly inside an Objective-C message
   /// send expression.
   ///
   /// This is managed by the \c InMessageExpressionRAIIObject class, and
@@ -236,6 +235,9 @@ public:
 
   const Token &getCurToken() const { return Tok; }
   Scope *getCurScope() const { return Actions.getCurScope(); }
+  void incrementMSLocalManglingNumber() const {
+    return Actions.incrementMSLocalManglingNumber();
+  }
 
   Decl  *getObjCDeclContext() const { return Actions.getObjCDeclContext(); }
 
@@ -273,6 +275,10 @@ public:
   /// ParseTopLevelDecl - Parse one top-level declaration. Returns true if
   /// the EOF was encountered.
   bool ParseTopLevelDecl(DeclGroupPtrTy &Result);
+  bool ParseTopLevelDecl() {
+    DeclGroupPtrTy Result;
+    return ParseTopLevelDecl(Result);
+  }
 
   /// ConsumeToken - Consume the current 'peek token' and lex the next one.
   /// This does not work with special tokens: string literals, code completion
@@ -439,6 +445,12 @@ private:
     return Kind == tok::eof || Kind == tok::annot_module_begin ||
            Kind == tok::annot_module_end || Kind == tok::annot_module_include;
   }
+
+  /// \brief Initialize all pragma handlers.
+  void initializePragmaHandlers();
+
+  /// \brief Destroy and reset all pragma handlers.
+  void resetPragmaHandlers();
 
   /// \brief Handle the annotation token produced for #pragma unused(...)
   void HandlePragmaUnused();
@@ -728,14 +740,18 @@ public:
   public:
     // ParseScope - Construct a new object to manage a scope in the
     // parser Self where the new Scope is created with the flags
-    // ScopeFlags, but only when ManageScope is true (the default). If
-    // ManageScope is false, this object does nothing.
-    ParseScope(Parser *Self, unsigned ScopeFlags, bool ManageScope = true)
+    // ScopeFlags, but only when we aren't about to enter a compound statement.
+    ParseScope(Parser *Self, unsigned ScopeFlags, bool EnteredScope = true,
+               bool BeforeCompoundStmt = false)
       : Self(Self) {
-      if (ManageScope)
+      if (EnteredScope && !BeforeCompoundStmt)
         Self->EnterScope(ScopeFlags);
-      else
+      else {
+        if (BeforeCompoundStmt)
+          Self->incrementMSLocalManglingNumber();
+
         this->Self = 0;
+      }
     }
 
     // Exit - Exit the scope associated with this object now, rather
@@ -1788,7 +1804,7 @@ private:
   /// \brief Starting with a scope specifier, identifier, or
   /// template-id that refers to the current class, determine whether
   /// this is a constructor declarator.
-  bool isConstructorDeclarator();
+  bool isConstructorDeclarator(bool Unqualified);
 
   /// \brief Specifies the context in which type-id/expression
   /// disambiguation will occur.
