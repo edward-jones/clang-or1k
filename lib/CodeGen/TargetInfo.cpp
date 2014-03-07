@@ -2565,7 +2565,6 @@ llvm::Value *X86_64ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
   // };
   unsigned neededInt, neededSSE;
 
-  Ty = getFirstFieldInTransparentUnion(Ty);
   Ty = CGF.getContext().getCanonicalType(Ty);
   ABIArgInfo AI = classifyArgumentType(Ty, 0, neededInt, neededSSE,
                                        /*isNamedArg*/false);
@@ -4904,7 +4903,6 @@ ABIArgInfo OR1KABIInfo::classifyReturnType(QualType RetTy) const {
 }
 
 ABIArgInfo OR1KABIInfo::classifyArgumentType(QualType Ty) const {
-  Ty = getFirstFieldInTransparentUnion(Ty);
   if (isAggregateTypeForABI(Ty))
     return ABIArgInfo::getIndirect(0);
 
