@@ -1347,6 +1347,8 @@ def mno_ror : Flag<["-"], "mno-ror">, Group<m_or1k_Features_Group>;
 def mror : Flag<["-"], "mror">, Group<m_or1k_Features_Group>;
 def msoft_div : Flag<["-"], "msoft-div">, Group<m_Group>;
 def msoft_mul : Flag<["-"], "msoft-mul">, Group<m_Group>;
+def mmac : Flag<["-"], "mmac">, Group<m_or1k_Features_Group>;
+def mno_mac : Flag<["-"], "mno-mac">, Group<m_or1k_Features_Group>;
 
 def fintegrated_as : Flag<["-"], "fintegrated-as">, Flags<[DriverOption]>,
                      Group<f_Group>, HelpText<"Enable the integrated assembler">;

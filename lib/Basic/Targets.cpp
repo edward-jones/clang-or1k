@@ -1596,7 +1596,8 @@ public:
     if (Name == "mul" ||
         Name == "div" ||
         Name == "ror" ||
-        Name == "cmov") {
+        Name == "cmov" ||
+        Name == "mac") {
       Features[Name] = Enabled;
     }
   }

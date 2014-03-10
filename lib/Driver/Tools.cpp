@@ -1237,6 +1237,15 @@ void Clang::AddOR1KTargetArgs(const ArgList &Args,
       CmdArgs.push_back("-ror");
   }
 
+  if (Arg *A = Args.getLastArg(options::OPT_mmac,
+                               options::OPT_mno_mac)) {
+    CmdArgs.push_back("-target-feature");
+    if (A->getOption().matches(options::OPT_mmac))
+      CmdArgs.push_back("+mac");
+    else
+      CmdArgs.push_back("-mac");
+  }
+
   if (Arg *A = Args.getLastArg(options::OPT_mdelay,
                                options::OPT_mno_delay,
                                options::OPT_mcompat_delay)) {
