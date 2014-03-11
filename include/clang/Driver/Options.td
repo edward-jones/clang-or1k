@@ -1351,6 +1351,8 @@ def mmac : Flag<["-"], "mmac">, Group<m_or1k_Features_Group>;
 def mno_mac : Flag<["-"], "mno-mac">, Group<m_or1k_Features_Group>;
 def mext : Flag<["-"], "mext">, Group<m_or1k_Features_Group>;
 def mno_ext : Flag<["-"], "mno-ext">, Group<m_or1k_Features_Group>;
+def msfii : Flag<["-"], "msfii">, Group<m_or1k_Features_Group>;
+def mno_sfii : Flag<["-"], "mno-sfii">, Group<m_or1k_Features_Group>;
 
 def fintegrated_as : Flag<["-"], "fintegrated-as">, Flags<[DriverOption]>,
                      Group<f_Group>, HelpText<"Enable the integrated assembler">;

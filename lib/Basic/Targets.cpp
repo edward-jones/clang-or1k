@@ -1598,7 +1598,8 @@ public:
         Name == "ror" ||
         Name == "cmov" ||
         Name == "mac" ||
-        Name == "ext") {
+        Name == "ext" ||
+        Name == "sfii") {
       Features[Name] = Enabled;
     }
   }

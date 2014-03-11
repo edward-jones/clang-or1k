@@ -1255,6 +1255,15 @@ void Clang::AddOR1KTargetArgs(const ArgList &Args,
       CmdArgs.push_back("-ext");
   }
 
+  if (Arg *A = Args.getLastArg(options::OPT_msfii,
+                               options::OPT_mno_sfii)) {
+    CmdArgs.push_back("-target-feature");
+    if (A->getOption().matches(options::OPT_msfii))
+      CmdArgs.push_back("+sfii");
+    else
+      CmdArgs.push_back("-sfii");
+  }
+
   if (Arg *A = Args.getLastArg(options::OPT_mdelay,
                                options::OPT_mno_delay,
                                options::OPT_mcompat_delay)) {
