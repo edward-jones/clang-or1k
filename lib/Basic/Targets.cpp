@@ -1597,7 +1597,8 @@ public:
         Name == "div" ||
         Name == "ror" ||
         Name == "cmov" ||
-        Name == "mac") {
+        Name == "mac" ||
+        Name == "ext") {
       Features[Name] = Enabled;
     }
   }
