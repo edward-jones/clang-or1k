@@ -1599,7 +1599,8 @@ public:
         Name == "cmov" ||
         Name == "mac" ||
         Name == "ext" ||
-        Name == "sfii") {
+        Name == "sfii" ||
+        Name == "fbit") {
       Features[Name] = Enabled;
     }
   }

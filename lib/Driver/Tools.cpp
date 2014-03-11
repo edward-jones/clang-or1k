@@ -1264,6 +1264,15 @@ void Clang::AddOR1KTargetArgs(const ArgList &Args,
       CmdArgs.push_back("-sfii");
   }
 
+  if (Arg *A = Args.getLastArg(options::OPT_mfbit,
+                               options::OPT_mno_fbit)) {
+    CmdArgs.push_back("-target-feature");
+    if (A->getOption().matches(options::OPT_mfbit))
+      CmdArgs.push_back("+fbit");
+    else
+      CmdArgs.push_back("-fbit");
+  }
+
   if (Arg *A = Args.getLastArg(options::OPT_mdelay,
                                options::OPT_mno_delay,
                                options::OPT_mcompat_delay)) {
