@@ -1104,9 +1104,8 @@ static void possibleTransparentUnionPointerType(QualType &T) {
   if (const RecordType *UT = T->getAsUnionType())
     if (UT && UT->getDecl()->hasAttr<TransparentUnionAttr>()) {
       RecordDecl *UD = UT->getDecl();
-      for (RecordDecl::field_iterator it = UD->field_begin(),
-           itend = UD->field_end(); it != itend; ++it) {
-        QualType QT = it->getType();
+      for (const auto *I : UD->fields()) {
+        QualType QT = I->getType();
         if (QT->isAnyPointerType() || QT->isBlockPointerType()) {
           T = QT;
           return;
@@ -1285,15 +1284,13 @@ static void handleOwnershipAttr(Sema &S, Decl *D, const AttributeList &AL) {
     }
 
     // Check we don't have a conflict with another ownership attribute.
-    for (specific_attr_iterator<OwnershipAttr>
-         i = D->specific_attr_begin<OwnershipAttr>(),
-         e = D->specific_attr_end<OwnershipAttr>(); i != e; ++i) {
+    for (const auto *I : D->specific_attrs<OwnershipAttr>()) {
       // FIXME: A returns attribute should conflict with any returns attribute
       // with a different index too.
-      if ((*i)->getOwnKind() != K && (*i)->args_end() !=
-          std::find((*i)->args_begin(), (*i)->args_end(), Idx)) {
+      if (I->getOwnKind() != K && I->args_end() !=
+          std::find(I->args_begin(), I->args_end(), Idx)) {
         S.Diag(AL.getLoc(), diag::err_attributes_are_not_compatible)
-          << AL.getName() << *i;
+          << AL.getName() << I;
         return;
       }
     }
@@ -1540,9 +1537,8 @@ static void handleVecReturnAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     return;
   }
 
-  for (RecordDecl::field_iterator iter = record->field_begin();
-       iter != record->field_end(); iter++) {
-    if ((count == 1) || !iter->getType()->isVectorType()) {
+  for (const auto *I : record->fields()) {
+    if ((count == 1) || !I->getType()->isVectorType()) {
       S.Diag(Attr.getLoc(), diag::err_attribute_vecreturn_only_vector_member);
       return;
     }
@@ -2447,18 +2443,14 @@ FormatAttr *Sema::mergeFormatAttr(Decl *D, SourceRange Range,
                                   int FirstArg,
                                   unsigned AttrSpellingListIndex) {
   // Check whether we already have an equivalent format attribute.
-  for (specific_attr_iterator<FormatAttr>
-         i = D->specific_attr_begin<FormatAttr>(),
-         e = D->specific_attr_end<FormatAttr>();
-       i != e ; ++i) {
-    FormatAttr *f = *i;
-    if (f->getType() == Format &&
-        f->getFormatIdx() == FormatIdx &&
-        f->getFirstArg() == FirstArg) {
+  for (auto *F : D->specific_attrs<FormatAttr>()) {
+    if (F->getType() == Format &&
+        F->getFormatIdx() == FormatIdx &&
+        F->getFirstArg() == FirstArg) {
       // If we don't have a valid location for this attribute, adopt the
       // location.
-      if (f->getLocation().isInvalid())
-        f->setRange(Range);
+      if (F->getLocation().isInvalid())
+        F->setRange(Range);
       return NULL;
     }
   }
@@ -2669,10 +2661,8 @@ static void handleAnnotateAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     return;
 
   // Don't duplicate annotations that are already set.
-  for (specific_attr_iterator<AnnotateAttr>
-       i = D->specific_attr_begin<AnnotateAttr>(),
-       e = D->specific_attr_end<AnnotateAttr>(); i != e; ++i) {
-    if ((*i)->getAnnotation() == Str)
+  for (const auto *I : D->specific_attrs<AnnotateAttr>()) {
+    if (I->getAnnotation() == Str)
       return;
   }
   
@@ -2821,13 +2811,11 @@ void Sema::CheckAlignasUnderalignment(Decl *D) {
   //   would otherwise be required for the entity being declared.
   AlignedAttr *AlignasAttr = 0;
   unsigned Align = 0;
-  for (specific_attr_iterator<AlignedAttr>
-         I = D->specific_attr_begin<AlignedAttr>(),
-         E = D->specific_attr_end<AlignedAttr>(); I != E; ++I) {
+  for (auto *I : D->specific_attrs<AlignedAttr>()) {
     if (I->isAlignmentDependent())
       return;
     if (I->isAlignas())
-      AlignasAttr = *I;
+      AlignasAttr = I;
     Align = std::max(Align, I->getAlignment(Context));
   }
 
@@ -4657,6 +4645,8 @@ void Sema::DeclApplyPragmaWeak(Scope *S, NamedDecl *ND, WeakInfo &W) {
     // to insert Decl at TU scope, sorry.
     DeclContext *SavedContext = CurContext;
     CurContext = Context.getTranslationUnitDecl();
+    NewD->setDeclContext(CurContext);
+    NewD->setLexicalDeclContext(CurContext);
     PushOnScopeChains(NewD, S);
     CurContext = SavedContext;
   } else { // just add weak to existing

@@ -217,13 +217,13 @@ void CodeGenModule::checkAliases() {
     StringRef MangledName = getMangledName(GD);
     llvm::GlobalValue *Entry = GetGlobalValue(MangledName);
     llvm::GlobalAlias *Alias = cast<llvm::GlobalAlias>(Entry);
-    llvm::GlobalValue *GV = Alias->getAliasedGlobal();
-    if (GV->isDeclaration()) {
-      Error = true;
-      getDiags().Report(AA->getLocation(), diag::err_alias_to_undefined);
-    } else if (!Alias->resolveAliasedGlobal(/*stopOnWeak*/ false)) {
+    llvm::GlobalValue *GV = Alias->resolveAliasedGlobal(/*stopOnWeak*/ false);
+    if (!GV) {
       Error = true;
       getDiags().Report(AA->getLocation(), diag::err_cyclic_alias);
+    } else if (GV->isDeclaration()) {
+      Error = true;
+      getDiags().Report(AA->getLocation(), diag::err_alias_to_undefined);
     }
   }
   if (!Error)
@@ -1051,10 +1051,8 @@ void CodeGenModule::AddGlobalAnnotations(const ValueDecl *D,
                                          llvm::GlobalValue *GV) {
   assert(D->hasAttr<AnnotateAttr>() && "no annotate attribute");
   // Get the struct elements for these annotations.
-  for (specific_attr_iterator<AnnotateAttr>
-       ai = D->specific_attr_begin<AnnotateAttr>(),
-       ae = D->specific_attr_end<AnnotateAttr>(); ai != ae; ++ai)
-    Annotations.push_back(EmitAnnotateAttr(GV, *ai, D->getLocation()));
+  for (const auto *I : D->specific_attrs<AnnotateAttr>())
+    Annotations.push_back(EmitAnnotateAttr(GV, I, D->getLocation()));
 }
 
 bool CodeGenModule::MayDeferGeneration(const ValueDecl *Global) {
@@ -1938,7 +1936,7 @@ static void replaceUsesOfNonProtoConstant(llvm::Constant *old,
   for (llvm::Value::use_iterator ui = old->use_begin(), ue = old->use_end();
          ui != ue; ) {
     llvm::Value::use_iterator use = ui++; // Increment before the use is erased.
-    llvm::User *user = *use;
+    llvm::User *user = use->getUser();
 
     // Recognize and replace uses of bitcasts.  Most calls to
     // unprototyped functions will use bitcasts.
@@ -1951,7 +1949,7 @@ static void replaceUsesOfNonProtoConstant(llvm::Constant *old,
     // Recognize calls to the function.
     llvm::CallSite callSite(user);
     if (!callSite) continue;
-    if (!callSite.isCallee(use)) continue;
+    if (!callSite.isCallee(&*use)) continue;
 
     // If the return types don't match exactly, then we can't
     // transform this call unless it's dead.
@@ -2832,13 +2830,12 @@ void CodeGenModule::EmitObjCIvarInitializations(ObjCImplementationDecl *D) {
 
 /// EmitNamespace - Emit all declarations in a namespace.
 void CodeGenModule::EmitNamespace(const NamespaceDecl *ND) {
-  for (RecordDecl::decl_iterator I = ND->decls_begin(), E = ND->decls_end();
-       I != E; ++I) {
-    if (const VarDecl *VD = dyn_cast<VarDecl>(*I))
+  for (auto *I : ND->decls()) {
+    if (const auto *VD = dyn_cast<VarDecl>(I))
       if (VD->getTemplateSpecializationKind() != TSK_ExplicitSpecialization &&
           VD->getTemplateSpecializationKind() != TSK_Undeclared)
         continue;
-    EmitTopLevelDecl(*I);
+    EmitTopLevelDecl(I);
   }
 }
 
@@ -2850,17 +2847,14 @@ void CodeGenModule::EmitLinkageSpec(const LinkageSpecDecl *LSD) {
     return;
   }
 
-  for (RecordDecl::decl_iterator I = LSD->decls_begin(), E = LSD->decls_end();
-       I != E; ++I) {
+  for (auto *I : LSD->decls()) {
     // Meta-data for ObjC class includes references to implemented methods.
     // Generate class's method definitions first.
-    if (ObjCImplDecl *OID = dyn_cast<ObjCImplDecl>(*I)) {
-      for (ObjCContainerDecl::method_iterator M = OID->meth_begin(),
-           MEnd = OID->meth_end();
-           M != MEnd; ++M)
-        EmitTopLevelDecl(*M);
+    if (auto *OID = dyn_cast<ObjCImplDecl>(I)) {
+      for (auto *M : OID->methods())
+        EmitTopLevelDecl(M);
     }
-    EmitTopLevelDecl(*I);
+    EmitTopLevelDecl(I);
   }
 }
 

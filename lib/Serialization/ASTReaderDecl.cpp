@@ -2609,12 +2609,10 @@ Decl *ASTReader::ReadDeclRecord(DeclID ID) {
       // There are updates. This means the context has external visible
       // storage, even if the original stored version didn't.
       LookupDC->setHasExternalVisibleStorage(true);
-      DeclContextVisibleUpdates &U = I->second;
-      for (DeclContextVisibleUpdates::iterator UI = U.begin(), UE = U.end();
-           UI != UE; ++UI) {
-        DeclContextInfo &Info = UI->second->DeclContextInfos[DC];
+      for (const auto &Update : I->second) {
+        DeclContextInfo &Info = Update.second->DeclContextInfos[DC];
         delete Info.NameLookupTableData;
-        Info.NameLookupTableData = UI->first;
+        Info.NameLookupTableData = Update.first;
       }
       PendingVisibleUpdates.erase(I);
     }
@@ -2885,15 +2883,12 @@ namespace {
         Tail(0) 
     {
       // Populate the name -> category map with the set of known categories.
-      for (ObjCInterfaceDecl::known_categories_iterator
-             Cat = Interface->known_categories_begin(),
-             CatEnd = Interface->known_categories_end();
-           Cat != CatEnd; ++Cat) {
+      for (auto *Cat : Interface->known_categories()) {
         if (Cat->getDeclName())
-          NameCategoryMap[Cat->getDeclName()] = *Cat;
+          NameCategoryMap[Cat->getDeclName()] = Cat;
         
         // Keep track of the tail of the category list.
-        Tail = *Cat;
+        Tail = Cat;
       }
     }
 

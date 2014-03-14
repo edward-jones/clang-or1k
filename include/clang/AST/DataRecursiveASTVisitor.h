@@ -598,8 +598,8 @@ bool DataRecursiveASTVisitor<Derived>::TraverseDecl(Decl *D) {
   }
 
   // Visit any attributes attached to this declaration.
-  for (Decl::attr_iterator I=D->attr_begin(), E=D->attr_end(); I != E; ++I) {
-    if (!getDerived().TraverseAttr(*I))
+  for (auto *I : D->attrs()) {
+    if (!getDerived().TraverseAttr(I))
       return false;
   }
   return true;
@@ -1222,13 +1222,11 @@ bool DataRecursiveASTVisitor<Derived>::TraverseDeclContextHelper(DeclContext *DC
   if (!DC)
     return true;
 
-  for (DeclContext::decl_iterator Child = DC->decls_begin(),
-           ChildEnd = DC->decls_end();
-       Child != ChildEnd; ++Child) {
+  for (auto *Child : DC->decls()) {
     // BlockDecls and CapturedDecls are traversed through BlockExprs and
     // CapturedStmts respectively.
-    if (!isa<BlockDecl>(*Child) && !isa<CapturedDecl>(*Child))
-      TRY_TO(TraverseDecl(*Child));
+    if (!isa<BlockDecl>(Child) && !isa<CapturedDecl>(Child))
+      TRY_TO(TraverseDecl(Child));
   }
 
   return true;
@@ -1629,10 +1627,8 @@ bool DataRecursiveASTVisitor<Derived>::TraverseCXXRecordHelper(
   if (!TraverseRecordHelper(D))
     return false;
   if (D->isCompleteDefinition()) {
-    for (CXXRecordDecl::base_class_iterator I = D->bases_begin(),
-                                            E = D->bases_end();
-         I != E; ++I) {
-      TRY_TO(TraverseTypeLoc(I->getTypeSourceInfo()->getTypeLoc()));
+    for (const auto &I : D->bases()) {
+      TRY_TO(TraverseTypeLoc(I.getTypeSourceInfo()->getTypeLoc()));
     }
     // We don't traverse the friends or the conversions, as they are
     // already in decls_begin()/decls_end().
@@ -1780,10 +1776,8 @@ bool DataRecursiveASTVisitor<Derived>::TraverseFunctionHelper(FunctionDecl *D) {
 
   if (CXXConstructorDecl *Ctor = dyn_cast<CXXConstructorDecl>(D)) {
     // Constructor initializers.
-    for (CXXConstructorDecl::init_iterator I = Ctor->init_begin(),
-                                           E = Ctor->init_end();
-         I != E; ++I) {
-      TRY_TO(TraverseConstructorInitializer(*I));
+    for (auto *I : Ctor->inits()) {
+      TRY_TO(TraverseConstructorInitializer(I));
     }
   }
 

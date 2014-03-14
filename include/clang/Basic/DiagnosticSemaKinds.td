@@ -106,9 +106,9 @@ def err_array_star_in_function_definition : Error<
 def err_vla_decl_in_file_scope : Error<
   "variable length array declaration not allowed at file scope">;
 def err_vla_decl_has_static_storage : Error<
-  "variable length array declaration can not have 'static' storage duration">;
+  "variable length array declaration cannot have 'static' storage duration">;
 def err_vla_decl_has_extern_linkage : Error<
-  "variable length array declaration can not have 'extern' linkage">;
+  "variable length array declaration cannot have 'extern' linkage">;
 def ext_vla_folded_to_constant : Extension<
   "variable length array folded to constant array as an extension">, InGroup<GNUFoldingConstant>;
 
@@ -273,9 +273,9 @@ def err_using_decl_nested_name_specifier_is_current_class : Error<
 def err_using_decl_nested_name_specifier_is_not_base_class : Error<
   "using declaration refers into '%0', which is not a base class of %1">;
 def err_using_decl_constructor_not_in_direct_base : Error<
-  "%0 is not a direct base of %1, can not inherit constructors">;
+  "%0 is not a direct base of %1, cannot inherit constructors">;
 def err_using_decl_constructor_conflict : Error<
-  "can not inherit constructor, already inherited constructor with "
+  "cannot inherit constructor, already inherited constructor with "
   "the same signature">;
 def note_using_decl_constructor_conflict_current_ctor : Note<
   "conflicting constructor">;
@@ -289,18 +289,18 @@ def warn_using_decl_constructor_ellipsis : Warning<
 def note_using_decl_constructor_ellipsis : Note<
   "constructor declared with ellipsis here">;
 def err_using_decl_can_not_refer_to_class_member : Error<
-  "using declaration can not refer to class member">;
+  "using declaration cannot refer to class member">;
 def err_using_decl_can_not_refer_to_namespace : Error<
-  "using declaration can not refer to namespace">;
+  "using declaration cannot refer to namespace">;
 def err_using_decl_constructor : Error<
-  "using declaration can not refer to a constructor">;
+  "using declaration cannot refer to a constructor">;
 def warn_cxx98_compat_using_decl_constructor : Warning<
   "inheriting constructors are incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
 def err_using_decl_destructor : Error<
-  "using declaration can not refer to a destructor">;
+  "using declaration cannot refer to a destructor">;
 def err_using_decl_template_id : Error<
-  "using declaration can not refer to a template specialization">;
+  "using declaration cannot refer to a template specialization">;
 def note_using_decl_target : Note<"target of using declaration">;
 def note_using_decl_conflict : Note<"conflicting declaration">;
 def err_using_decl_redeclaration : Error<"redeclaration of using decl">;
@@ -861,7 +861,7 @@ def error_weak_property : Error<
 def error_strong_property : Error<
   "existing instance variable %1 for strong property %0 may not be __weak">;
 def error_dynamic_property_ivar_decl : Error<
-  "dynamic property can not have instance variable specification">;
+  "dynamic property cannot have instance variable specification">;
 def error_duplicate_ivar_use : Error<
   "synthesized properties %0 and %1 both claim instance variable %2">;
 def error_property_implemented : Error<"property %0 is already implemented">;
@@ -892,7 +892,9 @@ def warn_unimplemented_selector:  Warning<
   InGroup<Selector>, DefaultIgnore;
 def warn_unimplemented_protocol_method : Warning<
   "method %0 in protocol %1 not implemented">, InGroup<Protocol>;
-
+def warning_multiple_selectors: Warning<
+  "several methods with selector %0 of mismatched types are found for the @selector expression">,
+  InGroup<SelectorTypeMismatch>;
 // C++ declarations
 def err_static_assert_expression_is_not_constant : Error<
   "static_assert expression is not an integral constant expression">;
@@ -986,13 +988,13 @@ def err_multiple_final_overriders : Error<
 def note_final_overrider : Note<"final overrider of %q0 in %1">;
 
 def err_type_defined_in_type_specifier : Error<
-  "%0 can not be defined in a type specifier">;
+  "%0 cannot be defined in a type specifier">;
 def err_type_defined_in_result_type : Error<
-  "%0 can not be defined in the result type of a function">;
+  "%0 cannot be defined in the result type of a function">;
 def err_type_defined_in_param_type : Error<
-  "%0 can not be defined in a parameter type">;
+  "%0 cannot be defined in a parameter type">;
 def err_type_defined_in_alias_template : Error<
-  "%0 can not be defined in a type alias template">;
+  "%0 cannot be defined in a type alias template">;
 
 def note_pure_virtual_function : Note<
   "unimplemented pure virtual method %0 in %1">;
@@ -1162,7 +1164,7 @@ def err_virtual_non_function : Error<
 def err_virtual_out_of_class : Error<
   "'virtual' can only be specified inside the class definition">;
 def err_virtual_member_function_template : Error<
-  "'virtual' can not be specified on member function templates">;
+  "'virtual' cannot be specified on member function templates">;
 def err_static_overrides_virtual : Error<
   "'static' member function %0 overrides a virtual function in a base class">;
 def err_explicit_non_function : Error<
@@ -1538,12 +1540,15 @@ def err_auto_var_requires_init : Error<
   "declaration of variable %0 with type %1 requires an initializer">;
 def err_auto_new_requires_ctor_arg : Error<
   "new expression for type %0 requires a constructor argument">;
-def err_auto_new_requires_parens : Error<
+def err_auto_new_list_init : Error<
   "new expression for type %0 cannot use list-initialization">;
 def err_auto_var_init_no_expression : Error<
   "initializer for variable %0 with type %1 is empty">;
 def err_auto_var_init_multiple_expressions : Error<
   "initializer for variable %0 with type %1 contains multiple expressions">;
+def err_auto_var_init_paren_braces : Error<
+  "cannot deduce type for variable %0 with type %1 from "
+  "parenthesized initializer list">;
 def err_auto_new_ctor_multiple_expressions : Error<
   "new expression for type %0 contains multiple constructor arguments">;
 def err_auto_missing_trailing_return : Error<
@@ -2485,6 +2490,8 @@ def warn_objc_requires_super_protocol : Warning<
   InGroup<DiagGroup<"requires-super-attribute">>;
 def note_protocol_decl : Note<
   "protocol is declared here">;
+def note_protocol_decl_undefined : Note<
+  "protocol %0 has no definition">;
 
 // objc_designated_initializer attribute diagnostics.
 def warn_objc_designated_init_missing_super_call : Warning<
@@ -3255,7 +3262,7 @@ def err_partial_spec_args_match_primary_template : Error<
     "primary template, remove the template argument list">; 
 def warn_partial_specs_not_deducible : Warning<
     "%select{class|variable}0 template partial specialization contains "
-    "%select{a template parameter|template parameters}1 that can not be "
+    "%select{a template parameter|template parameters}1 that cannot be "
     "deduced; this partial specialization will never be used">;
 def note_partial_spec_unused_parameter : Note<
     "non-deducible template parameter %0">;
@@ -3785,7 +3792,7 @@ def warn_illegal_constant_array_size : Extension<
 def err_vm_decl_in_file_scope : Error<
   "variably modified type declaration not allowed at file scope">;
 def err_vm_decl_has_extern_linkage : Error<
-  "variably modified type declaration can not have 'extern' linkage">;
+  "variably modified type declaration cannot have 'extern' linkage">;
 def err_typecheck_field_variable_size : Error<
   "fields must have a constant size: 'variable length array in structure' "
   "extension will never be supported">;
@@ -4910,7 +4917,7 @@ def warn_register_objc_catch_parm : Warning<
 def err_qualified_objc_catch_parm : Error<
   "@catch parameter declarator cannot be qualified">;
 def warn_objc_pointer_cxx_catch_fragile : Warning<
-  "can not catch an exception thrown with @throw in C++ in the non-unified "
+  "cannot catch an exception thrown with @throw in C++ in the non-unified "
   "exception model">, InGroup<ObjCNonUnifiedException>;
 def err_objc_object_catch : Error<
   "can't catch an Objective-C object by value">;
@@ -5237,6 +5244,9 @@ let CategoryName = "Lambda Issue" in {
     "initializer missing for lambda capture %0">;
   def err_init_capture_multiple_expressions : Error<
     "initializer for lambda capture %0 contains multiple expressions">;
+  def err_init_capture_paren_braces : Error<
+    "cannot deduce type for lambda capture %0 from "
+    "parenthesized initializer list">;
   def err_init_capture_deduction_failure : Error<
     "cannot deduce type for lambda capture %0 from initializer of type %2">;
   def err_init_capture_deduction_failure_from_init_list : Error<
@@ -5689,7 +5699,10 @@ def err_atomic_op_needs_atomic_int_or_ptr : Error<
 def err_atomic_op_bitwise_needs_atomic_int : Error<
   "address argument to bitwise atomic operation must be a pointer to "
   "%select{|atomic }0integer (%1 invalid)">;
-  
+def warn_atomic_op_has_invalid_memory_order : Warning<
+  "memory order argument to atomic operation is invalid">,
+  InGroup<DiagGroup<"atomic-memory-ordering">>;
+
 def err_atomic_load_store_uses_lib : Error<
   "atomic %select{load|store}0 requires runtime support that is not "
   "available for this target">;
@@ -5813,7 +5826,7 @@ def warn_unused_volatile : Warning<
   InGroup<DiagGroup<"unused-volatile-lvalue">>;
 
 def warn_unused_comparison : Warning<
-  "%select{equality|inequality}0 comparison result unused">,
+  "%select{%select{|in}1equality|relational}0 comparison result unused">,
   InGroup<UnusedComparison>;
 def note_inequality_comparison_to_or_assign : Note<
   "use '|=' to turn this inequality comparison into an or-assignment">;
@@ -6425,7 +6438,7 @@ def err_default_not_in_switch : Error<
   "'default' statement not in switch statement">;
 def err_case_not_in_switch : Error<"'case' statement not in switch statement">;
 def warn_bool_switch_condition : Warning<
-  "switch condition has boolean value">;
+  "switch condition has boolean value">, InGroup<SwitchBool>;
 def warn_case_value_overflow : Warning<
   "overflow converting case value to switch condition type (%0 to %1)">,
   InGroup<Switch>;

@@ -24,6 +24,7 @@
 #include "clang/Tooling/ArgumentsAdjusters.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Config/config.h"
 #include "llvm/Option/Option.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FileSystem.h"
@@ -31,7 +32,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 // For chdir, see the comment in ClangTool::run for more information.
-#ifdef _WIN32
+#ifdef LLVM_ON_WIN32
 #  include <direct.h>
 #else
 #  include <unistd.h>
@@ -207,18 +208,18 @@ bool ToolInvocation::run() {
       IntrusiveRefCntPtr<clang::DiagnosticIDs>(new DiagnosticIDs()), &*DiagOpts,
       DiagConsumer ? DiagConsumer : &DiagnosticPrinter, false);
 
-  const OwningPtr<clang::driver::Driver> Driver(
+  const std::unique_ptr<clang::driver::Driver> Driver(
       newDriver(&Diagnostics, BinaryName));
   // Since the input might only be virtual, don't check whether it exists.
   Driver->setCheckInputsExist(false);
-  const OwningPtr<clang::driver::Compilation> Compilation(
+  const std::unique_ptr<clang::driver::Compilation> Compilation(
       Driver->BuildCompilation(llvm::makeArrayRef(Argv)));
   const llvm::opt::ArgStringList *const CC1Args = getCC1Arguments(
       &Diagnostics, Compilation.get());
   if (CC1Args == NULL) {
     return false;
   }
-  OwningPtr<clang::CompilerInvocation> Invocation(
+  std::unique_ptr<clang::CompilerInvocation> Invocation(
       newInvocation(&Diagnostics, *CC1Args));
   for (llvm::StringMap<StringRef>::const_iterator
            It = MappedFileContents.begin(), End = MappedFileContents.end();
@@ -228,7 +229,7 @@ bool ToolInvocation::run() {
         llvm::MemoryBuffer::getMemBuffer(It->getValue());
     Invocation->getPreprocessorOpts().addRemappedFile(It->getKey(), Input);
   }
-  return runInvocation(BinaryName, Compilation.get(), Invocation.take());
+  return runInvocation(BinaryName, Compilation.get(), Invocation.release());
 }
 
 bool ToolInvocation::runInvocation(
@@ -255,8 +256,8 @@ bool FrontendActionFactory::runInvocation(CompilerInvocation *Invocation,
 
   // The FrontendAction can have lifetime requirements for Compiler or its
   // members, and we need to ensure it's deleted earlier than Compiler. So we
-  // pass it to an OwningPtr declared after the Compiler variable.
-  OwningPtr<FrontendAction> ScopedToolAction(create());
+  // pass it to an std::unique_ptr declared after the Compiler variable.
+  std::unique_ptr<FrontendAction> ScopedToolAction(create());
 
   // Create the compilers actual diagnostics engine.
   Compiler.createDiagnostics(DiagConsumer, /*ShouldOwnClient=*/false);

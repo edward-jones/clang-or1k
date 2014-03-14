@@ -387,10 +387,7 @@ static void addRedeclaredMethods(const ObjCMethodDecl *ObjCMethod,
     if (!ID)
       return;
     // Add redeclared method here.
-    for (ObjCInterfaceDecl::known_extensions_iterator
-           Ext = ID->known_extensions_begin(),
-           ExtEnd = ID->known_extensions_end();
-         Ext != ExtEnd; ++Ext) {
+    for (const auto *Ext : ID->known_extensions()) {
       if (ObjCMethodDecl *RedeclaredMethod =
             Ext->getMethod(ObjCMethod->getSelector(),
                                   ObjCMethod->isInstanceMethod()))
@@ -481,11 +478,10 @@ comments::FullComment *ASTContext::getCommentForDecl(
       if (!(RD = RD->getDefinition()))
         return NULL;
       // Check non-virtual bases.
-      for (CXXRecordDecl::base_class_const_iterator I =
-           RD->bases_begin(), E = RD->bases_end(); I != E; ++I) {
-        if (I->isVirtual() || (I->getAccessSpecifier() != AS_public))
+      for (const auto &I : RD->bases()) {
+        if (I.isVirtual() || (I.getAccessSpecifier() != AS_public))
           continue;
-        QualType Ty = I->getType();
+        QualType Ty = I.getType();
         if (Ty.isNull())
           continue;
         if (const CXXRecordDecl *NonVirtualBase = Ty->getAsCXXRecordDecl()) {
@@ -497,11 +493,10 @@ comments::FullComment *ASTContext::getCommentForDecl(
         }
       }
       // Check virtual bases.
-      for (CXXRecordDecl::base_class_const_iterator I =
-           RD->vbases_begin(), E = RD->vbases_end(); I != E; ++I) {
-        if (I->getAccessSpecifier() != AS_public)
+      for (const auto &I : RD->vbases()) {
+        if (I.getAccessSpecifier() != AS_public)
           continue;
-        QualType Ty = I->getType();
+        QualType Ty = I.getType();
         if (Ty.isNull())
           continue;
         if (const CXXRecordDecl *VirtualBase = Ty->getAsCXXRecordDecl()) {
@@ -1797,9 +1792,8 @@ void ASTContext::DeepCollectObjCIvars(const ObjCInterfaceDecl *OI,
   if (const ObjCInterfaceDecl *SuperClass = OI->getSuperClass())
     DeepCollectObjCIvars(SuperClass, false, Ivars);
   if (!leafClass) {
-    for (ObjCInterfaceDecl::ivar_iterator I = OI->ivar_begin(),
-         E = OI->ivar_end(); I != E; ++I)
-      Ivars.push_back(*I);
+    for (const auto *I : OI->ivars())
+      Ivars.push_back(I);
   } else {
     ObjCInterfaceDecl *IDecl = const_cast<ObjCInterfaceDecl *>(OI);
     for (const ObjCIvarDecl *Iv = IDecl->all_declared_ivar_begin(); Iv; 
@@ -1815,24 +1809,17 @@ void ASTContext::CollectInheritedProtocols(const Decl *CDecl,
   if (const ObjCInterfaceDecl *OI = dyn_cast<ObjCInterfaceDecl>(CDecl)) {
     // We can use protocol_iterator here instead of
     // all_referenced_protocol_iterator since we are walking all categories.    
-    for (ObjCInterfaceDecl::all_protocol_iterator P = OI->all_referenced_protocol_begin(),
-         PE = OI->all_referenced_protocol_end(); P != PE; ++P) {
-      ObjCProtocolDecl *Proto = (*P);
+    for (auto *Proto : OI->all_referenced_protocols()) {
       Protocols.insert(Proto->getCanonicalDecl());
-      for (ObjCProtocolDecl::protocol_iterator P = Proto->protocol_begin(),
-           PE = Proto->protocol_end(); P != PE; ++P) {
-        Protocols.insert((*P)->getCanonicalDecl());
-        CollectInheritedProtocols(*P, Protocols);
+      for (auto *P : Proto->protocols()) {
+        Protocols.insert(P->getCanonicalDecl());
+        CollectInheritedProtocols(P, Protocols);
       }
     }
     
     // Categories of this Interface.
-    for (ObjCInterfaceDecl::visible_categories_iterator
-           Cat = OI->visible_categories_begin(),
-           CatEnd = OI->visible_categories_end();
-         Cat != CatEnd; ++Cat) {
-      CollectInheritedProtocols(*Cat, Protocols);
-    }
+    for (const auto *Cat : OI->visible_categories())
+      CollectInheritedProtocols(Cat, Protocols);
 
     if (ObjCInterfaceDecl *SD = OI->getSuperClass())
       while (SD) {
@@ -1844,18 +1831,14 @@ void ASTContext::CollectInheritedProtocols(const Decl *CDecl,
          PE = OC->protocol_end(); P != PE; ++P) {
       ObjCProtocolDecl *Proto = (*P);
       Protocols.insert(Proto->getCanonicalDecl());
-      for (ObjCProtocolDecl::protocol_iterator P = Proto->protocol_begin(),
-           PE = Proto->protocol_end(); P != PE; ++P)
-        CollectInheritedProtocols(*P, Protocols);
+      for (const auto *P : Proto->protocols())
+        CollectInheritedProtocols(P, Protocols);
     }
   } else if (const ObjCProtocolDecl *OP = dyn_cast<ObjCProtocolDecl>(CDecl)) {
-    for (ObjCProtocolDecl::protocol_iterator P = OP->protocol_begin(),
-         PE = OP->protocol_end(); P != PE; ++P) {
-      ObjCProtocolDecl *Proto = (*P);
+    for (auto *Proto : OP->protocols()) {
       Protocols.insert(Proto->getCanonicalDecl());
-      for (ObjCProtocolDecl::protocol_iterator P = Proto->protocol_begin(),
-           PE = Proto->protocol_end(); P != PE; ++P)
-        CollectInheritedProtocols(*P, Protocols);
+      for (const auto *P : Proto->protocols())
+        CollectInheritedProtocols(P, Protocols);
     }
   }
 }
@@ -1863,12 +1846,8 @@ void ASTContext::CollectInheritedProtocols(const Decl *CDecl,
 unsigned ASTContext::CountNonClassIvars(const ObjCInterfaceDecl *OI) const {
   unsigned count = 0;  
   // Count ivars declared in class extension.
-  for (ObjCInterfaceDecl::known_extensions_iterator
-         Ext = OI->known_extensions_begin(),
-         ExtEnd = OI->known_extensions_end();
-       Ext != ExtEnd; ++Ext) {
+  for (const auto *Ext : OI->known_extensions())
     count += Ext->ivar_size();
-  }
   
   // Count ivar defined in this class's implementation.  This
   // includes synthesized ivars.
@@ -4804,9 +4783,8 @@ std::string ASTContext::getObjCEncodingForBlock(const BlockExpr *Expr) const {
   SourceLocation Loc;
   CharUnits PtrSize = getTypeSizeInChars(VoidPtrTy);
   CharUnits ParmOffset = PtrSize;
-  for (BlockDecl::param_const_iterator PI = Decl->param_begin(),
-       E = Decl->param_end(); PI != E; ++PI) {
-    QualType PType = (*PI)->getType();
+  for (auto PI : Decl->params()) {
+    QualType PType = PI->getType();
     CharUnits sz = getObjCEncodingTypeSize(PType);
     if (sz.isZero())
       continue;
@@ -4820,9 +4798,7 @@ std::string ASTContext::getObjCEncodingForBlock(const BlockExpr *Expr) const {
   
   // Argument types.
   ParmOffset = PtrSize;
-  for (BlockDecl::param_const_iterator PI = Decl->param_begin(), E =
-       Decl->param_end(); PI != E; ++PI) {
-    ParmVarDecl *PVDecl = *PI;
+  for (auto PVDecl : Decl->params()) {
     QualType PType = PVDecl->getOriginalType(); 
     if (const ArrayType *AT =
           dyn_cast<ArrayType>(PType->getCanonicalTypeInternal())) {
@@ -4850,9 +4826,8 @@ bool ASTContext::getObjCEncodingForFunctionDecl(const FunctionDecl *Decl,
   getObjCEncodingForType(Decl->getReturnType(), S);
   CharUnits ParmOffset;
   // Compute size of all parameters.
-  for (FunctionDecl::param_const_iterator PI = Decl->param_begin(),
-       E = Decl->param_end(); PI != E; ++PI) {
-    QualType PType = (*PI)->getType();
+  for (auto PI : Decl->params()) {
+    QualType PType = PI->getType();
     CharUnits sz = getObjCEncodingTypeSize(PType);
     if (sz.isZero())
       continue;
@@ -4865,9 +4840,7 @@ bool ASTContext::getObjCEncodingForFunctionDecl(const FunctionDecl *Decl,
   ParmOffset = CharUnits::Zero();
 
   // Argument types.
-  for (FunctionDecl::param_const_iterator PI = Decl->param_begin(),
-       E = Decl->param_end(); PI != E; ++PI) {
-    ParmVarDecl *PVDecl = *PI;
+  for (auto PVDecl : Decl->params()) {
     QualType PType = PVDecl->getOriginalType();
     if (const ArrayType *AT =
           dyn_cast<ArrayType>(PType->getCanonicalTypeInternal())) {
@@ -5375,9 +5348,7 @@ void ASTContext::getObjCEncodingForTypeImpl(QualType T, std::string& S,
       if (!RDecl->isUnion()) {
         getObjCEncodingForStructureImpl(RDecl, S, FD);
       } else {
-        for (RecordDecl::field_iterator Field = RDecl->field_begin(),
-                                     FieldEnd = RDecl->field_end();
-             Field != FieldEnd; ++Field) {
+        for (const auto *Field : RDecl->fields()) {
           if (FD) {
             S += '"';
             S += Field->getNameAsString();
@@ -5387,7 +5358,7 @@ void ASTContext::getObjCEncodingForTypeImpl(QualType T, std::string& S,
           // Special case bit-fields.
           if (Field->isBitField()) {
             getObjCEncodingForTypeImpl(Field->getType(), S, false, true,
-                                       *Field);
+                                       Field);
           } else {
             QualType qt = Field->getType();
             getLegacyIntegralTypeEncoding(qt);
@@ -5604,11 +5575,9 @@ void ASTContext::getObjCEncodingForStructureImpl(RecordDecl *RDecl,
   const ASTRecordLayout &layout = getASTRecordLayout(RDecl);
 
   if (CXXRec) {
-    for (CXXRecordDecl::base_class_iterator
-           BI = CXXRec->bases_begin(),
-           BE = CXXRec->bases_end(); BI != BE; ++BI) {
-      if (!BI->isVirtual()) {
-        CXXRecordDecl *base = BI->getType()->getAsCXXRecordDecl();
+    for (const auto &BI : CXXRec->bases()) {
+      if (!BI.isVirtual()) {
+        CXXRecordDecl *base = BI.getType()->getAsCXXRecordDecl();
         if (base->isEmpty())
           continue;
         uint64_t offs = toBits(layout.getBaseClassOffset(base));
@@ -5628,10 +5597,8 @@ void ASTContext::getObjCEncodingForStructureImpl(RecordDecl *RDecl,
   }
 
   if (CXXRec && includeVBases) {
-    for (CXXRecordDecl::base_class_iterator
-           BI = CXXRec->vbases_begin(),
-           BE = CXXRec->vbases_end(); BI != BE; ++BI) {
-      CXXRecordDecl *base = BI->getType()->getAsCXXRecordDecl();
+    for (const auto &BI : CXXRec->vbases()) {
+      CXXRecordDecl *base = BI.getType()->getAsCXXRecordDecl();
       if (base->isEmpty())
         continue;
       uint64_t offs = toBits(layout.getVBaseClassOffset(base));
@@ -6414,9 +6381,8 @@ ASTContext::ProtocolCompatibleWithProtocol(ObjCProtocolDecl *lProto,
                                            ObjCProtocolDecl *rProto) const {
   if (declaresSameEntity(lProto, rProto))
     return true;
-  for (ObjCProtocolDecl::protocol_iterator PI = rProto->protocol_begin(),
-       E = rProto->protocol_end(); PI != E; ++PI)
-    if (ProtocolCompatibleWithProtocol(lProto, *PI))
+  for (auto *PI : rProto->protocols())
+    if (ProtocolCompatibleWithProtocol(lProto, PI))
       return true;
   return false;
 }
@@ -6851,9 +6817,8 @@ QualType ASTContext::mergeTransparentUnionType(QualType T, QualType SubType,
   if (const RecordType *UT = T->getAsUnionType()) {
     RecordDecl *UD = UT->getDecl();
     if (UD->hasAttr<TransparentUnionAttr>()) {
-      for (RecordDecl::field_iterator it = UD->field_begin(),
-           itend = UD->field_end(); it != itend; ++it) {
-        QualType ET = it->getType().getUnqualifiedType();
+      for (const auto *I : UD->fields()) {
+        QualType ET = I->getType().getUnqualifiedType();
         QualType MT = mergeTypes(ET, SubType, OfBlockPointer, Unqualified);
         if (!MT.isNull())
           return MT;

@@ -14,7 +14,6 @@
 #include "clang/Frontend/CodeGenOptions.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
 #include "clang/Frontend/Utils.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/Bitcode/BitcodeWriterPass.h"
 #include "llvm/CodeGen/RegAllocRegistry.h"
 #include "llvm/CodeGen/SchedulerRegistry.h"
@@ -38,6 +37,7 @@
 #include "llvm/Transforms/Instrumentation.h"
 #include "llvm/Transforms/ObjCARC.h"
 #include "llvm/Transforms/Scalar.h"
+#include <memory>
 using namespace clang;
 using namespace llvm;
 
@@ -119,10 +119,10 @@ public:
     delete PerModulePasses;
     delete PerFunctionPasses;
     if (CodeGenOpts.DisableFree)
-      BuryPointer(TM.take());
+      BuryPointer(TM.release());
   }
 
-  llvm::OwningPtr<TargetMachine> TM;
+  std::unique_ptr<TargetMachine> TM;
 
   void EmitAssembly(BackendAction Action, raw_ostream *OS);
 };
@@ -308,19 +308,12 @@ void EmitAssemblyHelper::CreatePasses() {
   PMBuilder.LibraryInfo = new TargetLibraryInfo(TargetTriple);
   if (!CodeGenOpts.SimplifyLibCalls)
     PMBuilder.LibraryInfo->disableAllFunctions();
-  
+
   switch (Inlining) {
   case CodeGenOptions::NoInlining: break;
   case CodeGenOptions::NormalInlining: {
-    // FIXME: Derive these constants in a principled fashion.
-    unsigned Threshold = 225;
-    if (CodeGenOpts.OptimizeSize == 1)      // -Os
-      Threshold = 75;
-    else if (CodeGenOpts.OptimizeSize == 2) // -Oz
-      Threshold = 25;
-    else if (OptLevel > 2)
-      Threshold = 275;
-    PMBuilder.Inliner = createFunctionInliningPass(Threshold);
+    PMBuilder.Inliner =
+        createFunctionInliningPass(OptLevel, CodeGenOpts.OptimizeSize);
     break;
   }
   case CodeGenOptions::OnlyAlwaysInlining:

@@ -935,9 +935,8 @@ void CGDebugInfo::CollectRecordFields(const RecordDecl *record,
 
     // Static and non-static members should appear in the same order as
     // the corresponding declarations in the source program.
-    for (RecordDecl::decl_iterator I = record->decls_begin(),
-           E = record->decls_end(); I != E; ++I)
-      if (const VarDecl *V = dyn_cast<VarDecl>(*I)) {
+    for (const auto *I : record->decls())
+      if (const auto *V = dyn_cast<VarDecl>(I)) {
         // Reuse the existing static member declaration if one exists
         llvm::DenseMap<const Decl *, llvm::WeakVH>::iterator MI =
             StaticDataMemberCache.find(V->getCanonicalDecl());
@@ -948,7 +947,7 @@ void CGDebugInfo::CollectRecordFields(const RecordDecl *record,
               llvm::DIDerivedType(cast<llvm::MDNode>(MI->second)));
         } else
           elements.push_back(CreateRecordStaticField(V, RecordTy));
-      } else if (FieldDecl *field = dyn_cast<FieldDecl>(*I)) {
+      } else if (const auto *field = dyn_cast<FieldDecl>(I)) {
         CollectRecordNormalField(field, layout.getFieldOffset(fieldNo),
                                  tunit, elements, RecordTy);
 
@@ -1130,9 +1129,8 @@ CollectCXXMemberFunctions(const CXXRecordDecl *RD, llvm::DIFile Unit,
   // Since we want more than just the individual member decls if we
   // have templated functions iterate over every declaration to gather
   // the functions.
-  for(DeclContext::decl_iterator I = RD->decls_begin(),
-        E = RD->decls_end(); I != E; ++I) {
-    if (const CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(*I)) {
+  for(const auto *I : RD->decls()) {
+    if (const auto *Method = dyn_cast<CXXMethodDecl>(I)) {
       // Reuse the existing member function declaration if it exists.
       // It may be associated with the declaration of the type & should be
       // reused as we're building the definition.
@@ -1149,8 +1147,7 @@ CollectCXXMemberFunctions(const CXXRecordDecl *RD, llvm::DIFile Unit,
           EltTys.push_back(CreateCXXMemberFunction(Method, Unit, RecordTy));
       } else
         EltTys.push_back(MI->second);
-    } else if (const FunctionTemplateDecl *FTD =
-                   dyn_cast<FunctionTemplateDecl>(*I)) {
+    } else if (const auto *FTD = dyn_cast<FunctionTemplateDecl>(I)) {
       // Add any template specializations that have already been seen. Like
       // implicit member functions, these may have been added to a declaration
       // in the case of vtable-based debug info reduction.
@@ -1175,15 +1172,14 @@ CollectCXXBases(const CXXRecordDecl *RD, llvm::DIFile Unit,
                 llvm::DIType RecordTy) {
 
   const ASTRecordLayout &RL = CGM.getContext().getASTRecordLayout(RD);
-  for (CXXRecordDecl::base_class_const_iterator BI = RD->bases_begin(),
-         BE = RD->bases_end(); BI != BE; ++BI) {
+  for (const auto &BI : RD->bases()) {
     unsigned BFlags = 0;
     uint64_t BaseOffset;
 
     const CXXRecordDecl *Base =
-      cast<CXXRecordDecl>(BI->getType()->getAs<RecordType>()->getDecl());
+      cast<CXXRecordDecl>(BI.getType()->getAs<RecordType>()->getDecl());
 
-    if (BI->isVirtual()) {
+    if (BI.isVirtual()) {
       // virtual base offset offset is -ve. The code generator emits dwarf
       // expression where it expects +ve number.
       BaseOffset =
@@ -1195,7 +1191,7 @@ CollectCXXBases(const CXXRecordDecl *RD, llvm::DIFile Unit,
     // FIXME: Inconsistent units for BaseOffset. It is in bytes when
     // BI->isVirtual() and bits when not.
 
-    AccessSpecifier Access = BI->getAccessSpecifier();
+    AccessSpecifier Access = BI.getAccessSpecifier();
     if (Access == clang::AS_private)
       BFlags |= llvm::DIDescriptor::FlagPrivate;
     else if (Access == clang::AS_protected)
@@ -1203,7 +1199,7 @@ CollectCXXBases(const CXXRecordDecl *RD, llvm::DIFile Unit,
 
     llvm::DIType DTy =
       DBuilder.createInheritance(RecordTy,
-                                 getOrCreateType(BI->getType(), Unit),
+                                 getOrCreateType(BI.getType(), Unit),
                                  BaseOffset, BFlags);
     EltTys.push_back(DTy);
   }
@@ -1672,9 +1668,7 @@ llvm::DIType CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
   }
 
   // Create entries for all of the properties.
-  for (ObjCContainerDecl::prop_iterator I = ID->prop_begin(),
-         E = ID->prop_end(); I != E; ++I) {
-    const ObjCPropertyDecl *PD = *I;
+  for (const auto *PD : ID->properties()) {
     SourceLocation Loc = PD->getLocation();
     llvm::DIFile PUnit = getOrCreateFile(Loc);
     unsigned PLine = getLineNumber(Loc);
@@ -1920,9 +1914,7 @@ llvm::DIType CGDebugInfo::CreateEnumType(const EnumType *Ty) {
   // Create DIEnumerator elements for each enumerator.
   SmallVector<llvm::Value *, 16> Enumerators;
   ED = ED->getDefinition();
-  for (EnumDecl::enumerator_iterator
-         Enum = ED->enumerator_begin(), EnumEnd = ED->enumerator_end();
-       Enum != EnumEnd; ++Enum) {
+  for (const auto *Enum : ED->enumerators()) {
     Enumerators.push_back(
       DBuilder.createEnumerator(Enum->getName(),
                                 Enum->getInitVal().getSExtValue()));
@@ -2472,9 +2464,8 @@ llvm::DICompositeType CGDebugInfo::getOrCreateFunctionType(const Decl *D,
     llvm::DIType CmdTy = getOrCreateType(OMethod->getCmdDecl()->getType(), F);
     Elts.push_back(DBuilder.createArtificialType(CmdTy));
     // Get rest of the arguments.
-    for (ObjCMethodDecl::param_const_iterator PI = OMethod->param_begin(),
-           PE = OMethod->param_end(); PI != PE; ++PI)
-      Elts.push_back(getOrCreateType((*PI)->getType(), F));
+    for (const auto *PI : OMethod->params())
+      Elts.push_back(getOrCreateType(PI->getType(), F));
 
     llvm::DIArray EltTypeArray = DBuilder.getOrCreateArray(Elts);
     return DBuilder.createSubroutineType(F, EltTypeArray);
@@ -2843,10 +2834,7 @@ void CGDebugInfo::EmitDeclare(const VarDecl *VD, unsigned Tag,
     // all union fields.
     const RecordDecl *RD = cast<RecordDecl>(RT->getDecl());
     if (RD->isUnion() && RD->isAnonymousStructOrUnion()) {
-      for (RecordDecl::field_iterator I = RD->field_begin(),
-             E = RD->field_end();
-           I != E; ++I) {
-        FieldDecl *Field = *I;
+      for (const auto *Field : RD->fields()) {
         llvm::DIType FieldTy = getOrCreateType(Field->getType(), Unit);
         StringRef FieldName = Field->getName();
 

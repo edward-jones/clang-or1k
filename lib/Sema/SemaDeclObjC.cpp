@@ -329,17 +329,15 @@ void Sema::ActOnStartOfObjCMethodDef(Scope *FnBodyScope, Decl *D) {
                            /*CheckParameterNames=*/false);
 
   // Introduce all of the other parameters into this scope.
-  for (ObjCMethodDecl::param_iterator PI = MDecl->param_begin(),
-       E = MDecl->param_end(); PI != E; ++PI) {
-    ParmVarDecl *Param = (*PI);
+  for (auto *Param : MDecl->params()) {
     if (!Param->isInvalidDecl() &&
         getLangOpts().ObjCAutoRefCount &&
         !HasExplicitOwnershipAttr(*this, Param))
       Diag(Param->getLocation(), diag::warn_arc_strong_pointer_objc_pointer) <<
             Param->getType();
     
-    if ((*PI)->getIdentifier())
-      PushOnScopeChains(*PI, FnBodyScope);
+    if (Param->getIdentifier())
+      PushOnScopeChains(Param, FnBodyScope);
   }
 
   // In ARC, disallow definition of retain/release/autorelease/retainCount
@@ -439,7 +437,7 @@ class ObjCInterfaceValidatorCCC : public CorrectionCandidateCallback {
   explicit ObjCInterfaceValidatorCCC(ObjCInterfaceDecl *IDecl)
       : CurrentIDecl(IDecl) {}
 
-  virtual bool ValidateCandidate(const TypoCorrection &candidate) {
+  bool ValidateCandidate(const TypoCorrection &candidate) override {
     ObjCInterfaceDecl *ID = candidate.getCorrectionDeclAs<ObjCInterfaceDecl>();
     return ID && !declaresSameEntity(ID, CurrentIDecl);
   }
@@ -762,6 +760,21 @@ Sema::ActOnStartProtocolInterface(SourceLocation AtProtoInterfaceLoc,
   return ActOnObjCContainerStartDefinition(PDecl);
 }
 
+static bool NestedProtocolHasNoDefinition(ObjCProtocolDecl *PDecl,
+                                          ObjCProtocolDecl *&UndefinedProtocol) {
+  if (!PDecl->hasDefinition() || PDecl->getDefinition()->isHidden()) {
+    UndefinedProtocol = PDecl;
+    return true;
+  }
+  
+  for (auto *PI : PDecl->protocols())
+    if (NestedProtocolHasNoDefinition(PI, UndefinedProtocol)) {
+      UndefinedProtocol = PI;
+      return true;
+    }
+  return false;
+}
+
 /// FindProtocolDeclaration - This routine looks up protocols and
 /// issues an error if they are not declared. It returns list of
 /// protocol declarations in its 'Protocols' argument.
@@ -797,10 +810,15 @@ Sema::FindProtocolDeclaration(bool WarnOnDeclarations,
     // If this is a forward declaration and we are supposed to warn in this
     // case, do it.
     // FIXME: Recover nicely in the hidden case.
+    ObjCProtocolDecl *UndefinedProtocol;
+    
     if (WarnOnDeclarations &&
-        (!PDecl->hasDefinition() || PDecl->getDefinition()->isHidden()))
+        NestedProtocolHasNoDefinition(PDecl, UndefinedProtocol)) {
       Diag(ProtocolId[i].second, diag::warn_undef_protocolref)
         << ProtocolId[i].first;
+      Diag(UndefinedProtocol->getLocation(), diag::note_protocol_decl_undefined)
+        << UndefinedProtocol;
+    }
     Protocols.push_back(PDecl);
   }
 }
@@ -814,17 +832,12 @@ void Sema::DiagnoseClassExtensionDupMethods(ObjCCategoryDecl *CAT,
     return;  // Possibly due to previous error
 
   llvm::DenseMap<Selector, const ObjCMethodDecl*> MethodMap;
-  for (ObjCInterfaceDecl::method_iterator i = ID->meth_begin(),
-       e =  ID->meth_end(); i != e; ++i) {
-    ObjCMethodDecl *MD = *i;
+  for (auto *MD : ID->methods())
     MethodMap[MD->getSelector()] = MD;
-  }
 
   if (MethodMap.empty())
     return;
-  for (ObjCCategoryDecl::method_iterator i = CAT->meth_begin(),
-       e =  CAT->meth_end(); i != e; ++i) {
-    ObjCMethodDecl *Method = *i;
+  for (const auto *Method : CAT->methods()) {
     const ObjCMethodDecl *&PrevMethod = MethodMap[Method->getSelector()];
     if (PrevMethod && !MatchTwoMethodDeclarations(Method, PrevMethod)) {
       Diag(Method->getLocation(), diag::err_duplicate_method_decl)
@@ -1165,11 +1178,7 @@ void Sema::CheckImplementationIvars(ObjCImplementationDecl *ImpDecl,
         continue;
       }
       // Check class extensions (unnamed categories) for duplicate ivars.
-      for (ObjCInterfaceDecl::visible_extensions_iterator
-           Ext = IDecl->visible_extensions_begin(),
-           ExtEnd = IDecl->visible_extensions_end();
-         Ext != ExtEnd; ++Ext) {
-        ObjCCategoryDecl *CDecl = *Ext;
+      for (const auto *CDecl : IDecl->visible_extensions()) {
         if (const ObjCIvarDecl *ClsExtIvar = 
             CDecl->getIvarDecl(ImplIvar->getIdentifier())) {
           Diag(ImplIvar->getLocation(), diag::err_duplicate_ivar_declaration); 
@@ -1633,17 +1642,14 @@ void Sema::WarnExactTypedMethods(ObjCMethodDecl *ImpMethodDecl,
 /// memory cost and it would be handy for lookups.
 
 typedef llvm::DenseSet<IdentifierInfo*> ProtocolNameSet;
-typedef llvm::OwningPtr<ProtocolNameSet> LazyProtocolNameSet;
-
-
+typedef std::unique_ptr<ProtocolNameSet> LazyProtocolNameSet;
 
 static void findProtocolsWithExplicitImpls(const ObjCProtocolDecl *PDecl,
                                            ProtocolNameSet &PNS) {
   if (PDecl->hasAttr<ObjCExplicitProtocolImplAttr>())
     PNS.insert(PDecl->getIdentifier());
-  for (ObjCProtocolDecl::protocol_iterator PI = PDecl->protocol_begin(),
-       PE = PDecl->protocol_end(); PI != PE; ++PI)
-    findProtocolsWithExplicitImpls(*PI, PNS);
+  for (const auto *PI : PDecl->protocols())
+    findProtocolsWithExplicitImpls(PI, PNS);
 }
 
 /// Recursively populates a set with all conformed protocols in a class
@@ -1654,11 +1660,8 @@ static void findProtocolsWithExplicitImpls(const ObjCInterfaceDecl *Super,
   if (!Super)
     return;
 
-  for (ObjCInterfaceDecl::all_protocol_iterator
-        I = Super->all_referenced_protocol_begin(),
-        E = Super->all_referenced_protocol_end(); I != E; ++I) {
-    findProtocolsWithExplicitImpls(*I, PNS);
-  }
+  for (const auto *I : Super->all_referenced_protocols())
+    findProtocolsWithExplicitImpls(I, PNS);
 
   findProtocolsWithExplicitImpls(Super->getSuperClass(), PNS);
 }
@@ -1693,7 +1696,7 @@ static void CheckProtocolMethodDefs(Sema &S,
   // change is restricted to 'objc_protocol_requires_explicit_implementation'
   // protocols for now for controlled evaluation.
   if (PDecl->hasAttr<ObjCExplicitProtocolImplAttr>()) {
-    if (!ProtocolsExplictImpl.isValid()) {
+    if (!ProtocolsExplictImpl) {
       ProtocolsExplictImpl.reset(new ProtocolNameSet);
       findProtocolsWithExplicitImpls(Super, *ProtocolsExplictImpl);
     }
@@ -1734,9 +1737,7 @@ static void CheckProtocolMethodDefs(Sema &S,
 
   // check unimplemented instance methods.
   if (!NSIDecl)
-    for (ObjCProtocolDecl::instmeth_iterator I = PDecl->instmeth_begin(),
-         E = PDecl->instmeth_end(); I != E; ++I) {
-      ObjCMethodDecl *method = *I;
+    for (auto *method : PDecl->instance_methods()) {
       if (method->getImplementationControl() != ObjCMethodDecl::Optional &&
           !method->isPropertyAccessor() &&
           !InsMap.count(method->getSelector()) &&
@@ -1770,10 +1771,7 @@ static void CheckProtocolMethodDefs(Sema &S,
           }
     }
   // check unimplemented class methods
-  for (ObjCProtocolDecl::classmeth_iterator
-         I = PDecl->classmeth_begin(), E = PDecl->classmeth_end();
-       I != E; ++I) {
-    ObjCMethodDecl *method = *I;
+  for (auto *method : PDecl->class_methods()) {
     if (method->getImplementationControl() != ObjCMethodDecl::Optional &&
         !ClsMap.count(method->getSelector()) &&
         (!Super || !Super->lookupMethod(method->getSelector(),
@@ -1796,9 +1794,8 @@ static void CheckProtocolMethodDefs(Sema &S,
     }
   }
   // Check on this protocols's referenced protocols, recursively.
-  for (ObjCProtocolDecl::protocol_iterator PI = PDecl->protocol_begin(),
-       E = PDecl->protocol_end(); PI != E; ++PI)
-    CheckProtocolMethodDefs(S, ImpLoc, *PI, IncompleteImpl, InsMap, ClsMap,
+  for (auto *PI : PDecl->protocols())
+    CheckProtocolMethodDefs(S, ImpLoc, PI, IncompleteImpl, InsMap, ClsMap,
                             CDecl, ProtocolsExplictImpl);
 }
 
@@ -1816,56 +1813,50 @@ void Sema::MatchAllMethodDeclarations(const SelectorSet &InsMap,
                                       bool WarnCategoryMethodImpl) {
   // Check and see if instance methods in class interface have been
   // implemented in the implementation class. If so, their types match.
-  for (ObjCInterfaceDecl::instmeth_iterator I = CDecl->instmeth_begin(),
-       E = CDecl->instmeth_end(); I != E; ++I) {
-    if (!InsMapSeen.insert((*I)->getSelector()))
+  for (auto *I : CDecl->instance_methods()) {
+    if (!InsMapSeen.insert(I->getSelector()))
       continue;
-    if (!(*I)->isPropertyAccessor() &&
-        !InsMap.count((*I)->getSelector())) {
+    if (!I->isPropertyAccessor() &&
+        !InsMap.count(I->getSelector())) {
       if (ImmediateClass)
-        WarnUndefinedMethod(*this, IMPDecl->getLocation(), *I, IncompleteImpl,
+        WarnUndefinedMethod(*this, IMPDecl->getLocation(), I, IncompleteImpl,
                             diag::warn_undef_method_impl);
       continue;
     } else {
       ObjCMethodDecl *ImpMethodDecl =
-        IMPDecl->getInstanceMethod((*I)->getSelector());
-      assert(CDecl->getInstanceMethod((*I)->getSelector()) &&
+        IMPDecl->getInstanceMethod(I->getSelector());
+      assert(CDecl->getInstanceMethod(I->getSelector()) &&
              "Expected to find the method through lookup as well");
-      ObjCMethodDecl *MethodDecl = *I;
       // ImpMethodDecl may be null as in a @dynamic property.
       if (ImpMethodDecl) {
         if (!WarnCategoryMethodImpl)
-          WarnConflictingTypedMethods(ImpMethodDecl, MethodDecl,
+          WarnConflictingTypedMethods(ImpMethodDecl, I,
                                       isa<ObjCProtocolDecl>(CDecl));
-        else if (!MethodDecl->isPropertyAccessor())
-          WarnExactTypedMethods(ImpMethodDecl, MethodDecl,
-                                isa<ObjCProtocolDecl>(CDecl));
+        else if (!I->isPropertyAccessor())
+          WarnExactTypedMethods(ImpMethodDecl, I, isa<ObjCProtocolDecl>(CDecl));
       }
     }
   }
 
   // Check and see if class methods in class interface have been
   // implemented in the implementation class. If so, their types match.
-  for (ObjCInterfaceDecl::classmeth_iterator I = CDecl->classmeth_begin(),
-                                             E = CDecl->classmeth_end();
-       I != E; ++I) {
-    if (!ClsMapSeen.insert((*I)->getSelector()))
+  for (auto *I : CDecl->class_methods()) {
+    if (!ClsMapSeen.insert(I->getSelector()))
       continue;
-    if (!ClsMap.count((*I)->getSelector())) {
+    if (!ClsMap.count(I->getSelector())) {
       if (ImmediateClass)
-        WarnUndefinedMethod(*this, IMPDecl->getLocation(), *I, IncompleteImpl,
+        WarnUndefinedMethod(*this, IMPDecl->getLocation(), I, IncompleteImpl,
                             diag::warn_undef_method_impl);
     } else {
       ObjCMethodDecl *ImpMethodDecl =
-        IMPDecl->getClassMethod((*I)->getSelector());
-      assert(CDecl->getClassMethod((*I)->getSelector()) &&
+        IMPDecl->getClassMethod(I->getSelector());
+      assert(CDecl->getClassMethod(I->getSelector()) &&
              "Expected to find the method through lookup as well");
-      ObjCMethodDecl *MethodDecl = *I;
       if (!WarnCategoryMethodImpl)
-        WarnConflictingTypedMethods(ImpMethodDecl, MethodDecl, 
+        WarnConflictingTypedMethods(ImpMethodDecl, I, 
                                     isa<ObjCProtocolDecl>(CDecl));
       else
-        WarnExactTypedMethods(ImpMethodDecl, MethodDecl,
+        WarnExactTypedMethods(ImpMethodDecl, I,
                               isa<ObjCProtocolDecl>(CDecl));
     }
   }
@@ -1873,10 +1864,9 @@ void Sema::MatchAllMethodDeclarations(const SelectorSet &InsMap,
   if (ObjCProtocolDecl *PD = dyn_cast<ObjCProtocolDecl> (CDecl)) {
     // Also, check for methods declared in protocols inherited by
     // this protocol.
-    for (ObjCProtocolDecl::protocol_iterator
-          PI = PD->protocol_begin(), E = PD->protocol_end(); PI != E; ++PI)
+    for (auto *PI : PD->protocols())
       MatchAllMethodDeclarations(InsMap, ClsMap, InsMapSeen, ClsMapSeen,
-                                 IMPDecl, (*PI), IncompleteImpl, false,
+                                 IMPDecl, PI, IncompleteImpl, false,
                                  WarnCategoryMethodImpl);
   }
   
@@ -1885,35 +1875,24 @@ void Sema::MatchAllMethodDeclarations(const SelectorSet &InsMap,
     // i.e. when WarnCategoryMethodImpl is false, check declarations in class
     // extension; as well as those in categories.
     if (!WarnCategoryMethodImpl) {
-      for (ObjCInterfaceDecl::visible_categories_iterator
-             Cat = I->visible_categories_begin(),
-           CatEnd = I->visible_categories_end();
-           Cat != CatEnd; ++Cat) {
+      for (auto *Cat : I->visible_categories())
         MatchAllMethodDeclarations(InsMap, ClsMap, InsMapSeen, ClsMapSeen,
-                                   IMPDecl, *Cat, IncompleteImpl, false,
+                                   IMPDecl, Cat, IncompleteImpl, false,
                                    WarnCategoryMethodImpl);
-      }
     } else {
       // Also methods in class extensions need be looked at next.
-      for (ObjCInterfaceDecl::visible_extensions_iterator
-             Ext = I->visible_extensions_begin(),
-             ExtEnd = I->visible_extensions_end();
-           Ext != ExtEnd; ++Ext) {
+      for (auto *Ext : I->visible_extensions())
         MatchAllMethodDeclarations(InsMap, ClsMap, InsMapSeen, ClsMapSeen,
-                                   IMPDecl, *Ext, IncompleteImpl, false,
+                                   IMPDecl, Ext, IncompleteImpl, false,
                                    WarnCategoryMethodImpl);
-      }
     }
 
     // Check for any implementation of a methods declared in protocol.
-    for (ObjCInterfaceDecl::all_protocol_iterator
-          PI = I->all_referenced_protocol_begin(),
-          E = I->all_referenced_protocol_end(); PI != E; ++PI)
+    for (auto *PI : I->all_referenced_protocols())
       MatchAllMethodDeclarations(InsMap, ClsMap, InsMapSeen, ClsMapSeen,
-                                 IMPDecl,
-                                 (*PI), IncompleteImpl, false, 
+                                 IMPDecl, PI, IncompleteImpl, false,
                                  WarnCategoryMethodImpl);
-    
+
     // FIXME. For now, we are not checking for extact match of methods 
     // in category implementation and its primary class's super class. 
     if (!WarnCategoryMethodImpl && I->getSuperClass())
@@ -1938,10 +1917,8 @@ void Sema::CheckCategoryVsClassMethodMatches(
   ObjCInterfaceDecl *SuperIDecl = IDecl->getSuperClass();
   SelectorSet InsMap, ClsMap;
   
-  for (ObjCImplementationDecl::instmeth_iterator
-       I = CatIMPDecl->instmeth_begin(), 
-       E = CatIMPDecl->instmeth_end(); I!=E; ++I) {
-    Selector Sel = (*I)->getSelector();
+  for (const auto *I : CatIMPDecl->instance_methods()) {
+    Selector Sel = I->getSelector();
     // When checking for methods implemented in the category, skip over
     // those declared in category class's super class. This is because
     // the super class must implement the method.
@@ -1950,10 +1927,8 @@ void Sema::CheckCategoryVsClassMethodMatches(
     InsMap.insert(Sel);
   }
   
-  for (ObjCImplementationDecl::classmeth_iterator
-       I = CatIMPDecl->classmeth_begin(),
-       E = CatIMPDecl->classmeth_end(); I != E; ++I) {
-    Selector Sel = (*I)->getSelector();
+  for (const auto *I : CatIMPDecl->class_methods()) {
+    Selector Sel = I->getSelector();
     if (SuperIDecl && SuperIDecl->lookupMethod(Sel, false))
       continue;
     ClsMap.insert(Sel);
@@ -1975,9 +1950,8 @@ void Sema::ImplMethodsVsClassMethods(Scope *S, ObjCImplDecl* IMPDecl,
   SelectorSet InsMap;
   // Check and see if instance methods in class interface have been
   // implemented in the implementation class.
-  for (ObjCImplementationDecl::instmeth_iterator
-         I = IMPDecl->instmeth_begin(), E = IMPDecl->instmeth_end(); I!=E; ++I)
-    InsMap.insert((*I)->getSelector());
+  for (const auto *I : IMPDecl->instance_methods())
+    InsMap.insert(I->getSelector());
 
   // Check and see if properties declared in the interface have either 1)
   // an implementation or 2) there is a @synthesize/@dynamic implementation
@@ -1990,10 +1964,8 @@ void Sema::ImplMethodsVsClassMethods(Scope *S, ObjCImplDecl* IMPDecl,
   }
 
   SelectorSet ClsMap;
-  for (ObjCImplementationDecl::classmeth_iterator
-       I = IMPDecl->classmeth_begin(),
-       E = IMPDecl->classmeth_end(); I != E; ++I)
-    ClsMap.insert((*I)->getSelector());
+  for (const auto *I : IMPDecl->class_methods())
+    ClsMap.insert(I->getSelector());
 
   // Check for type conflict of methods declared in a class/protocol and
   // its implementation; if any.
@@ -2016,19 +1988,12 @@ void Sema::ImplMethodsVsClassMethods(Scope *S, ObjCImplDecl* IMPDecl,
   LazyProtocolNameSet ExplicitImplProtocols;
 
   if (ObjCInterfaceDecl *I = dyn_cast<ObjCInterfaceDecl> (CDecl)) {
-    for (ObjCInterfaceDecl::all_protocol_iterator
-          PI = I->all_referenced_protocol_begin(),
-          E = I->all_referenced_protocol_end(); PI != E; ++PI)
-      CheckProtocolMethodDefs(*this, IMPDecl->getLocation(), *PI,
-                              IncompleteImpl, InsMap, ClsMap, I,
-                              ExplicitImplProtocols);
+    for (auto *PI : I->all_referenced_protocols())
+      CheckProtocolMethodDefs(*this, IMPDecl->getLocation(), PI, IncompleteImpl,
+                              InsMap, ClsMap, I, ExplicitImplProtocols);
     // Check class extensions (unnamed categories)
-    for (ObjCInterfaceDecl::visible_extensions_iterator
-           Ext = I->visible_extensions_begin(),
-           ExtEnd = I->visible_extensions_end();
-         Ext != ExtEnd; ++Ext) {
-      ImplMethodsVsClassMethods(S, IMPDecl, *Ext, IncompleteImpl);
-    }
+    for (auto *Ext : I->visible_extensions())
+      ImplMethodsVsClassMethods(S, IMPDecl, Ext, IncompleteImpl);
   } else if (ObjCCategoryDecl *C = dyn_cast<ObjCCategoryDecl>(CDecl)) {
     // For extended class, unimplemented methods in its protocols will
     // be reported in the primary class.
@@ -2535,9 +2500,7 @@ Sema::SelectorsForTypoCorrection(Selector Sel,
 /// class's \@implementation is seen.
 void Sema::DiagnoseDuplicateIvars(ObjCInterfaceDecl *ID, 
                                   ObjCInterfaceDecl *SID) {
-  for (ObjCInterfaceDecl::ivar_iterator IVI = ID->ivar_begin(),
-       IVE = ID->ivar_end(); IVI != IVE; ++IVI) {
-    ObjCIvarDecl* Ivar = *IVI;
+  for (auto *Ivar : ID->ivars()) {
     if (Ivar->isInvalidDecl())
       continue;
     if (IdentifierInfo *II = Ivar->getIdentifier()) {
@@ -2663,10 +2626,8 @@ Decl *Sema::ActOnAtEnd(Scope *S, SourceRange AtEnd, ArrayRef<Decl *> allMethods,
       // ProcessPropertyDecl is responsible for diagnosing conflicts with any
       // user-defined setter/getter. It also synthesizes setter/getter methods
       // and adds them to the DeclContext and global method pools.
-      for (ObjCContainerDecl::prop_iterator I = CDecl->prop_begin(),
-                                            E = CDecl->prop_end();
-           I != E; ++I)
-        ProcessPropertyDecl(*I, CDecl);
+      for (auto *I : CDecl->properties())
+        ProcessPropertyDecl(I, CDecl);
     CDecl->setAtEndRange(AtEnd);
   }
   if (ObjCImplementationDecl *IC=dyn_cast<ObjCImplementationDecl>(ClassDecl)) {
@@ -2677,13 +2638,8 @@ Decl *Sema::ActOnAtEnd(Scope *S, SourceRange AtEnd, ArrayRef<Decl *> allMethods,
       // of the other class extensions. Mark them as synthesized as
       // property will be synthesized when property with same name is
       // seen in the @implementation.
-      for (ObjCInterfaceDecl::visible_extensions_iterator
-             Ext = IDecl->visible_extensions_begin(),
-             ExtEnd = IDecl->visible_extensions_end();
-           Ext != ExtEnd; ++Ext) {
-        for (ObjCContainerDecl::prop_iterator I = Ext->prop_begin(),
-             E = Ext->prop_end(); I != E; ++I) {
-          ObjCPropertyDecl *Property = *I;
+      for (const auto *Ext : IDecl->visible_extensions()) {
+        for (const auto *Property : Ext->properties()) {
           // Skip over properties declared @dynamic
           if (const ObjCPropertyImplDecl *PIDecl
               = IC->FindPropertyImplDecl(Property->getIdentifier()))
@@ -2691,10 +2647,7 @@ Decl *Sema::ActOnAtEnd(Scope *S, SourceRange AtEnd, ArrayRef<Decl *> allMethods,
                   == ObjCPropertyImplDecl::Dynamic)
               continue;
 
-          for (ObjCInterfaceDecl::visible_extensions_iterator
-                 Ext = IDecl->visible_extensions_begin(),
-                 ExtEnd = IDecl->visible_extensions_end();
-               Ext != ExtEnd; ++Ext) {
+          for (const auto *Ext : IDecl->visible_extensions()) {
             if (ObjCMethodDecl *GetterMethod
                   = Ext->getInstanceMethod(Property->getGetterName()))
               GetterMethod->setPropertyAccessor(true);
@@ -2933,12 +2886,8 @@ private:
       return;
     
     //   - categories,
-    for (ObjCInterfaceDecl::known_categories_iterator
-           cat = iface->known_categories_begin(),
-           catEnd = iface->known_categories_end();
-         cat != catEnd; ++cat) {
-      search(*cat);
-    }
+    for (auto *Cat : iface->known_categories())
+      search(Cat);
 
     //   - the super class, and
     if (ObjCInterfaceDecl *super = iface->getSuperClass())
@@ -3564,10 +3513,7 @@ void Sema::DiagnoseUnusedBackingIvarInAccessor(Scope *S,
   if (S->hasUnrecoverableErrorOccurred())
     return;
 
-  for (ObjCImplementationDecl::instmeth_iterator
-         MI = ImplD->instmeth_begin(),
-         ME = ImplD->instmeth_end(); MI != ME; ++MI) {
-    const ObjCMethodDecl *CurMethod = *MI;
+  for (const auto *CurMethod : ImplD->instance_methods()) {
     unsigned DIAG = diag::warn_unused_property_backing_ivar;
     SourceLocation Loc = CurMethod->getLocation();
     if (Diags.getDiagnosticLevel(DIAG, Loc) == DiagnosticsEngine::Ignored)

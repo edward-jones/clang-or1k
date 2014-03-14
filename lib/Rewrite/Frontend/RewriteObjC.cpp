@@ -23,11 +23,11 @@
 #include "clang/Lex/Lexer.h"
 #include "clang/Rewrite/Core/Rewriter.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
+#include <memory>
 
 using namespace clang;
 using llvm::utostr;
@@ -980,18 +980,12 @@ void RewriteObjC::RewriteCategoryDecl(ObjCCategoryDecl *CatDecl) {
   // FIXME: handle category headers that are declared across multiple lines.
   ReplaceText(LocStart, 0, "// ");
 
-  for (ObjCCategoryDecl::prop_iterator I = CatDecl->prop_begin(),
-       E = CatDecl->prop_end(); I != E; ++I)
-    RewriteProperty(*I);
-  
-  for (ObjCCategoryDecl::instmeth_iterator
-         I = CatDecl->instmeth_begin(), E = CatDecl->instmeth_end();
-       I != E; ++I)
-    RewriteMethodDeclaration(*I);
-  for (ObjCCategoryDecl::classmeth_iterator
-         I = CatDecl->classmeth_begin(), E = CatDecl->classmeth_end();
-       I != E; ++I)
-    RewriteMethodDeclaration(*I);
+  for (auto *I : CatDecl->properties())
+    RewriteProperty(I);  
+  for (auto *I : CatDecl->instance_methods())
+    RewriteMethodDeclaration(I);
+  for (auto *I : CatDecl->class_methods())
+    RewriteMethodDeclaration(I);
 
   // Lastly, comment out the @end.
   ReplaceText(CatDecl->getAtEndRange().getBegin(), 
@@ -1005,18 +999,12 @@ void RewriteObjC::RewriteProtocolDecl(ObjCProtocolDecl *PDecl) {
   // FIXME: handle protocol headers that are declared across multiple lines.
   ReplaceText(LocStart, 0, "// ");
 
-  for (ObjCProtocolDecl::instmeth_iterator
-         I = PDecl->instmeth_begin(), E = PDecl->instmeth_end();
-       I != E; ++I)
-    RewriteMethodDeclaration(*I);
-  for (ObjCProtocolDecl::classmeth_iterator
-         I = PDecl->classmeth_begin(), E = PDecl->classmeth_end();
-       I != E; ++I)
-    RewriteMethodDeclaration(*I);
-
-  for (ObjCInterfaceDecl::prop_iterator I = PDecl->prop_begin(),
-       E = PDecl->prop_end(); I != E; ++I)
-    RewriteProperty(*I);
+  for (auto *I : PDecl->instance_methods())
+    RewriteMethodDeclaration(I);
+  for (auto *I : PDecl->class_methods())
+    RewriteMethodDeclaration(I);
+  for (auto *I : PDecl->properties())
+    RewriteProperty(I);
   
   // Lastly, comment out the @end.
   SourceLocation LocEnd = PDecl->getAtEndRange().getBegin();
@@ -1141,9 +1129,7 @@ void RewriteObjC::RewriteObjCMethodDecl(const ObjCInterfaceDecl *IDecl,
   ResultStr += " _cmd";
 
   // Method arguments.
-  for (ObjCMethodDecl::param_iterator PI = OMD->param_begin(),
-       E = OMD->param_end(); PI != E; ++PI) {
-    ParmVarDecl *PDecl = *PI;
+  for (const auto *PDecl : OMD->params()) {
     ResultStr += ", ";
     if (PDecl->getType()->isObjCQualifiedIdType()) {
       ResultStr += "id ";
@@ -1190,12 +1176,8 @@ void RewriteObjC::RewriteImplementationDecl(Decl *OID) {
 
   InsertText(IMD ? IMD->getLocStart() : CID->getLocStart(), "// ");
 
-  for (ObjCCategoryImplDecl::instmeth_iterator
-       I = IMD ? IMD->instmeth_begin() : CID->instmeth_begin(),
-       E = IMD ? IMD->instmeth_end() : CID->instmeth_end();
-       I != E; ++I) {
+  for (auto *OMD : IMD ? IMD->instance_methods() : CID->instance_methods()) {
     std::string ResultStr;
-    ObjCMethodDecl *OMD = *I;
     RewriteObjCMethodDecl(OMD->getClassInterface(), OMD, ResultStr);
     SourceLocation LocStart = OMD->getLocStart();
     SourceLocation LocEnd = OMD->getCompoundBody()->getLocStart();
@@ -1205,12 +1187,8 @@ void RewriteObjC::RewriteImplementationDecl(Decl *OID) {
     ReplaceText(LocStart, endBuf-startBuf, ResultStr);
   }
 
-  for (ObjCCategoryImplDecl::classmeth_iterator
-       I = IMD ? IMD->classmeth_begin() : CID->classmeth_begin(),
-       E = IMD ? IMD->classmeth_end() : CID->classmeth_end();
-       I != E; ++I) {
+  for (auto *OMD : IMD ? IMD->class_methods() : CID->class_methods()) {
     std::string ResultStr;
-    ObjCMethodDecl *OMD = *I;
     RewriteObjCMethodDecl(OMD->getClassInterface(), OMD, ResultStr);
     SourceLocation LocStart = OMD->getLocStart();
     SourceLocation LocEnd = OMD->getCompoundBody()->getLocStart();
@@ -1247,17 +1225,12 @@ void RewriteObjC::RewriteInterfaceDecl(ObjCInterfaceDecl *ClassDecl) {
   }
   RewriteObjCInternalStruct(ClassDecl, ResultStr);
 
-  for (ObjCInterfaceDecl::prop_iterator I = ClassDecl->prop_begin(),
-         E = ClassDecl->prop_end(); I != E; ++I)
-    RewriteProperty(*I);
-  for (ObjCInterfaceDecl::instmeth_iterator
-         I = ClassDecl->instmeth_begin(), E = ClassDecl->instmeth_end();
-       I != E; ++I)
-    RewriteMethodDeclaration(*I);
-  for (ObjCInterfaceDecl::classmeth_iterator
-         I = ClassDecl->classmeth_begin(), E = ClassDecl->classmeth_end();
-       I != E; ++I)
-    RewriteMethodDeclaration(*I);
+  for (auto *I : ClassDecl->properties())
+    RewriteProperty(I);
+  for (auto *I : ClassDecl->instance_methods())
+    RewriteMethodDeclaration(I);
+  for (auto *I : ClassDecl->class_methods())
+    RewriteMethodDeclaration(I);
 
   // Lastly, comment out the @end.
   ReplaceText(ClassDecl->getAtEndRange().getBegin(), strlen("@end"), 
@@ -2975,11 +2948,10 @@ Stmt *RewriteObjC::SynthMessageExpr(ObjCMessageExpr *Exp,
   ArgTypes.push_back(Context->getObjCSelType());
   if (ObjCMethodDecl *OMD = Exp->getMethodDecl()) {
     // Push any user argument types.
-    for (ObjCMethodDecl::param_iterator PI = OMD->param_begin(),
-         E = OMD->param_end(); PI != E; ++PI) {
-      QualType t = (*PI)->getType()->isObjCQualifiedIdType()
+    for (const auto *PI : OMD->params()) {
+      QualType t = PI->getType()->isObjCQualifiedIdType()
                      ? Context->getObjCIdType()
-                     : (*PI)->getType();
+                     : PI->getType();
       // Make sure we convert "t (^)(...)" to "t (*)(...)".
       (void)convertBlockPointerToFunctionPointer(t);
       ArgTypes.push_back(t);
@@ -4866,9 +4838,7 @@ Stmt *RewriteObjC::RewriteFunctionBodyOrGlobalInitializer(Stmt *S) {
 }
 
 void RewriteObjC::RewriteRecordBody(RecordDecl *RD) {
-  for (RecordDecl::field_iterator i = RD->field_begin(), 
-                                  e = RD->field_end(); i != e; ++i) {
-    FieldDecl *FD = *i;
+  for (auto *FD : RD->fields()) {
     if (isTopLevelBlockPointerType(FD->getType()))
       RewriteBlockPointerDecl(FD);
     if (FD->getType()->isObjCQualifiedIdType() ||
@@ -5455,8 +5425,7 @@ void RewriteObjCFragileABI::RewriteObjCClassMetaData(ObjCImplementationDecl *IDe
   }
   
   // Build _objc_method_list for class's instance methods if needed
-  SmallVector<ObjCMethodDecl *, 32>
-  InstanceMethods(IDecl->instmeth_begin(), IDecl->instmeth_end());
+  SmallVector<ObjCMethodDecl *, 32> InstanceMethods(IDecl->instance_methods());
   
   // If any of our property implementations have associated getters or
   // setters, produce metadata for them as well.
@@ -5737,8 +5706,7 @@ void RewriteObjCFragileABI::RewriteObjCCategoryImplDecl(ObjCCategoryImplDecl *ID
   FullCategoryName += IDecl->getNameAsString();
   
   // Build _objc_method_list for class's instance methods if needed
-  SmallVector<ObjCMethodDecl *, 32>
-  InstanceMethods(IDecl->instmeth_begin(), IDecl->instmeth_end());
+  SmallVector<ObjCMethodDecl *, 32> InstanceMethods(IDecl->instance_methods());
   
   // If any of our property implementations have associated getters or
   // setters, produce metadata for them as well.

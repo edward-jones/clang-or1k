@@ -142,7 +142,7 @@ public:
     WantCXXNamedCasts = false;
   }
 
-  virtual bool ValidateCandidate(const TypoCorrection &candidate) {
+  bool ValidateCandidate(const TypoCorrection &candidate) override {
     if (FieldDecl *FD = candidate.getCorrectionDeclAs<FieldDecl>())
       return !candidate.getCorrectionSpecifier() || isa<ObjCIvarDecl>(FD);
     if (NextToken.is(tok::equal))
@@ -1766,7 +1766,7 @@ namespace {
 
     void *LookupInlineAsmIdentifier(StringRef &LineBuf,
                                     InlineAsmIdentifierInfo &Info,
-                                    bool IsUnevaluatedContext) {
+                                    bool IsUnevaluatedContext) override {
       // Collect the desired tokens.
       SmallVector<Token, 16> LineToks;
       const Token *FirstOrigToken = 0;
@@ -1806,7 +1806,7 @@ namespace {
     }
 
     bool LookupInlineAsmField(StringRef Base, StringRef Member,
-                              unsigned &Offset) {
+                              unsigned &Offset) override {
       return TheParser.getActions().LookupInlineAsmField(Base, Member,
                                                          Offset, AsmLoc);
     }
@@ -2163,13 +2163,13 @@ StmtResult Parser::ParseMicrosoftAsmStatement(SourceLocation AsmLoc) {
   if (buildMSAsmString(PP, AsmLoc, AsmToks, TokOffsets, AsmString))
     return StmtError();
 
-  OwningPtr<llvm::MCRegisterInfo> MRI(TheTarget->createMCRegInfo(TT));
-  OwningPtr<llvm::MCAsmInfo> MAI(TheTarget->createMCAsmInfo(*MRI, TT));
+  std::unique_ptr<llvm::MCRegisterInfo> MRI(TheTarget->createMCRegInfo(TT));
+  std::unique_ptr<llvm::MCAsmInfo> MAI(TheTarget->createMCAsmInfo(*MRI, TT));
   // Get the instruction descriptor.
-  const llvm::MCInstrInfo *MII = TheTarget->createMCInstrInfo(); 
-  OwningPtr<llvm::MCObjectFileInfo> MOFI(new llvm::MCObjectFileInfo());
-  OwningPtr<llvm::MCSubtargetInfo>
-    STI(TheTarget->createMCSubtargetInfo(TT, "", ""));
+  const llvm::MCInstrInfo *MII = TheTarget->createMCInstrInfo();
+  std::unique_ptr<llvm::MCObjectFileInfo> MOFI(new llvm::MCObjectFileInfo());
+  std::unique_ptr<llvm::MCSubtargetInfo> STI(
+      TheTarget->createMCSubtargetInfo(TT, "", ""));
 
   llvm::SourceMgr TempSrcMgr;
   llvm::MCContext Ctx(MAI.get(), MRI.get(), MOFI.get(), &TempSrcMgr);
@@ -2179,11 +2179,11 @@ StmtResult Parser::ParseMicrosoftAsmStatement(SourceLocation AsmLoc) {
   // Tell SrcMgr about this buffer, which is what the parser will pick up.
   TempSrcMgr.AddNewSourceBuffer(Buffer, llvm::SMLoc());
 
-  OwningPtr<llvm::MCStreamer> Str(createNullStreamer(Ctx));
-  OwningPtr<llvm::MCAsmParser>
-    Parser(createMCAsmParser(TempSrcMgr, Ctx, *Str.get(), *MAI));
-  OwningPtr<llvm::MCTargetAsmParser>
-    TargetParser(TheTarget->createMCAsmParser(*STI, *Parser, *MII));
+  std::unique_ptr<llvm::MCStreamer> Str(createNullStreamer(Ctx));
+  std::unique_ptr<llvm::MCAsmParser> Parser(
+      createMCAsmParser(TempSrcMgr, Ctx, *Str.get(), *MAI));
+  std::unique_ptr<llvm::MCTargetAsmParser> TargetParser(
+      TheTarget->createMCAsmParser(*STI, *Parser, *MII));
 
   llvm::MCInstPrinter *IP =
     TheTarget->createMCInstPrinter(1, *MAI, *MII, *MRI, *STI);

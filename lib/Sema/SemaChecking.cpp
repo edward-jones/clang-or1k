@@ -601,7 +601,7 @@ bool Sema::CheckARMBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
   if (CheckNeonBuiltinFunctionCall(BuiltinID, TheCall))
     return true;
 
-  // For NEON intrinsics which take an immediate value as part of the 
+  // For NEON intrinsics which take an immediate value as part of the
   // instruction, range check them here.
   unsigned i = 0, l = 0, u = 0;
   switch (BuiltinID) {
@@ -669,7 +669,6 @@ bool Sema::CheckX86BuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
   switch (BuiltinID) {
   case X86::BI_mm_prefetch:
     return SemaBuiltinMMPrefetch(TheCall);
-    break;
   }
   return false;
 }
@@ -731,11 +730,7 @@ static void CheckNonNullArguments(Sema &S,
                                   const Expr * const *ExprArgs,
                                   SourceLocation CallSiteLoc) {
   // Check the attributes attached to the method/function itself.
-  for (specific_attr_iterator<NonNullAttr>
-       I = FDecl->specific_attr_begin<NonNullAttr>(),
-       E = FDecl->specific_attr_end<NonNullAttr>(); I != E; ++I) {
-
-    const NonNullAttr *NonNull = *I;
+  for (const auto *NonNull : FDecl->specific_attrs<NonNullAttr>()) {
     for (NonNullAttr::args_iterator i = NonNull->args_begin(),
          e = NonNull->args_end();
          i != e; ++i) {
@@ -772,14 +767,11 @@ void Sema::checkCall(NamedDecl *FDecl, ArrayRef<const Expr *> Args,
   // Printf and scanf checking.
   llvm::SmallBitVector CheckedVarArgs;
   if (FDecl) {
-    for (specific_attr_iterator<FormatAttr>
-             I = FDecl->specific_attr_begin<FormatAttr>(),
-             E = FDecl->specific_attr_end<FormatAttr>();
-         I != E; ++I) {
+    for (const auto *I : FDecl->specific_attrs<FormatAttr>()) {
       // Only create vector if there are format attributes.
       CheckedVarArgs.resize(Args.size());
 
-      CheckFormatArguments(*I, Args, IsMemberFunction, CallType, Loc, Range,
+      CheckFormatArguments(I, Args, IsMemberFunction, CallType, Loc, Range,
                            CheckedVarArgs);
     }
   }
@@ -800,12 +792,8 @@ void Sema::checkCall(NamedDecl *FDecl, ArrayRef<const Expr *> Args,
     CheckNonNullArguments(*this, FDecl, Args.data(), Loc);
 
     // Type safety checking.
-    for (specific_attr_iterator<ArgumentWithTypeTagAttr>
-           i = FDecl->specific_attr_begin<ArgumentWithTypeTagAttr>(),
-           e = FDecl->specific_attr_end<ArgumentWithTypeTagAttr>();
-         i != e; ++i) {
-      CheckArgumentWithTypeTag(*i, Args.data());
-    }
+    for (const auto *I : FDecl->specific_attrs<ArgumentWithTypeTagAttr>())
+      CheckArgumentWithTypeTag(I, Args.data());
   }
 }
 
@@ -921,6 +909,33 @@ bool Sema::CheckOtherCall(CallExpr *TheCall, const FunctionProtoType *Proto) {
             TheCall->getCallee()->getSourceRange(), CallType);
 
   return false;
+}
+
+static bool isValidOrderingForOp(int64_t Ordering, AtomicExpr::AtomicOp Op) {
+  if (Ordering < AtomicExpr::AO_ABI_memory_order_relaxed ||
+      Ordering > AtomicExpr::AO_ABI_memory_order_seq_cst)
+    return false;
+
+  switch (Op) {
+  case AtomicExpr::AO__c11_atomic_init:
+    llvm_unreachable("There is no ordering argument for an init");
+
+  case AtomicExpr::AO__c11_atomic_load:
+  case AtomicExpr::AO__atomic_load_n:
+  case AtomicExpr::AO__atomic_load:
+    return Ordering != AtomicExpr::AO_ABI_memory_order_release &&
+           Ordering != AtomicExpr::AO_ABI_memory_order_acq_rel;
+
+  case AtomicExpr::AO__c11_atomic_store:
+  case AtomicExpr::AO__atomic_store:
+  case AtomicExpr::AO__atomic_store_n:
+    return Ordering != AtomicExpr::AO_ABI_memory_order_consume &&
+           Ordering != AtomicExpr::AO_ABI_memory_order_acquire &&
+           Ordering != AtomicExpr::AO_ABI_memory_order_acq_rel;
+
+  default:
+    return true;
+  }
 }
 
 ExprResult Sema::SemaAtomicOpsOverloaded(ExprResult TheCallResult,
@@ -1211,7 +1226,16 @@ ExprResult Sema::SemaAtomicOpsOverloaded(ExprResult TheCallResult,
     SubExprs.push_back(TheCall->getArg(3)); // Weak
     break;
   }
-  
+
+  if (SubExprs.size() >= 2 && Form != Init) {
+    llvm::APSInt Result(32);
+    if (SubExprs[1]->isIntegerConstantExpr(Result, Context) &&
+        !isValidOrderingForOp(Result.getSExtValue(), Op))
+      Diag(SubExprs[1]->getLocStart(),
+           diag::warn_atomic_op_has_invalid_memory_order)
+          << SubExprs[1]->getSourceRange();
+  }
+
   AtomicExpr *AE = new (Context) AtomicExpr(TheCall->getCallee()->getLocStart(),
                                             SubExprs, ResultType, Op,
                                             TheCall->getRParenLoc());
@@ -2142,10 +2166,7 @@ checkFormatStringExpr(Sema &S, const Expr *E, ArrayRef<const Expr *> Args,
         if (const ParmVarDecl *PV = dyn_cast<ParmVarDecl>(VD)) {
           if (const NamedDecl *ND = dyn_cast<NamedDecl>(PV->getDeclContext())) {
             int PVIndex = PV->getFunctionScopeIndex() + 1;
-            for (specific_attr_iterator<FormatAttr>
-                 i = ND->specific_attr_begin<FormatAttr>(),
-                 e = ND->specific_attr_end<FormatAttr>(); i != e ; ++i) {
-              FormatAttr *PVFormat = *i;
+            for (const auto *PVFormat : ND->specific_attrs<FormatAttr>()) {
               // adjust for implicit parameter
               if (const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(ND))
                 if (MD->isInstance())
@@ -2345,30 +2366,31 @@ public:
   void DoneProcessing();
 
   void HandleIncompleteSpecifier(const char *startSpecifier,
-                                 unsigned specifierLen);
+                                 unsigned specifierLen) override;
 
   void HandleInvalidLengthModifier(
-      const analyze_format_string::FormatSpecifier &FS,
-      const analyze_format_string::ConversionSpecifier &CS,
-      const char *startSpecifier, unsigned specifierLen, unsigned DiagID);
+                           const analyze_format_string::FormatSpecifier &FS,
+                           const analyze_format_string::ConversionSpecifier &CS,
+                           const char *startSpecifier, unsigned specifierLen,
+                           unsigned DiagID);
 
   void HandleNonStandardLengthModifier(
-      const analyze_format_string::FormatSpecifier &FS,
-      const char *startSpecifier, unsigned specifierLen);
+                    const analyze_format_string::FormatSpecifier &FS,
+                    const char *startSpecifier, unsigned specifierLen);
 
   void HandleNonStandardConversionSpecifier(
-      const analyze_format_string::ConversionSpecifier &CS,
-      const char *startSpecifier, unsigned specifierLen);
+                    const analyze_format_string::ConversionSpecifier &CS,
+                    const char *startSpecifier, unsigned specifierLen);
 
-  virtual void HandlePosition(const char *startPos, unsigned posLen);
+  void HandlePosition(const char *startPos, unsigned posLen) override;
 
-  virtual void HandleInvalidPosition(const char *startSpecifier,
-                                     unsigned specifierLen,
-                                     analyze_format_string::PositionContext p);
+  void HandleInvalidPosition(const char *startSpecifier,
+                             unsigned specifierLen,
+                             analyze_format_string::PositionContext p) override;
 
-  virtual void HandleZeroPosition(const char *startPos, unsigned posLen);
+  void HandleZeroPosition(const char *startPos, unsigned posLen) override;
 
-  void HandleNullChar(const char *nullCharacter);
+  void HandleNullChar(const char *nullCharacter) override;
 
   template <typename Range>
   static void EmitFormatDiagnostic(Sema &S, bool inFunctionCall,
@@ -2737,15 +2759,15 @@ public:
       ObjCContext(isObjC)
   {}
 
-  
+
   bool HandleInvalidPrintfConversionSpecifier(
                                       const analyze_printf::PrintfSpecifier &FS,
                                       const char *startSpecifier,
-                                      unsigned specifierLen);
-  
+                                      unsigned specifierLen) override;
+
   bool HandlePrintfSpecifier(const analyze_printf::PrintfSpecifier &FS,
                              const char *startSpecifier,
-                             unsigned specifierLen);
+                             unsigned specifierLen) override;
   bool checkFormatExpr(const analyze_printf::PrintfSpecifier &FS,
                        const char *StartSpecifier,
                        unsigned SpecifierLen,
@@ -3384,14 +3406,14 @@ public:
   
   bool HandleScanfSpecifier(const analyze_scanf::ScanfSpecifier &FS,
                             const char *startSpecifier,
-                            unsigned specifierLen);
+                            unsigned specifierLen) override;
   
   bool HandleInvalidScanfConversionSpecifier(
           const analyze_scanf::ScanfSpecifier &FS,
           const char *startSpecifier,
-          unsigned specifierLen);
+          unsigned specifierLen) override;
 
-  void HandleIncompleteScanList(const char *start, const char *end);
+  void HandleIncompleteScanList(const char *start, const char *end) override;
 };
 }
 
@@ -7635,21 +7657,16 @@ bool isLayoutCompatibleUnion(ASTContext &C,
                              RecordDecl *RD1,
                              RecordDecl *RD2) {
   llvm::SmallPtrSet<FieldDecl *, 8> UnmatchedFields;
-  for (RecordDecl::field_iterator Field2 = RD2->field_begin(),
-                                  Field2End = RD2->field_end();
-       Field2 != Field2End; ++Field2) {
-    UnmatchedFields.insert(*Field2);
-  }
+  for (auto *Field2 : RD2->fields())
+    UnmatchedFields.insert(Field2);
 
-  for (RecordDecl::field_iterator Field1 = RD1->field_begin(),
-                                  Field1End = RD1->field_end();
-       Field1 != Field1End; ++Field1) {
+  for (auto *Field1 : RD1->fields()) {
     llvm::SmallPtrSet<FieldDecl *, 8>::iterator
         I = UnmatchedFields.begin(),
         E = UnmatchedFields.end();
 
     for ( ; I != E; ++I) {
-      if (isLayoutCompatible(C, *Field1, *I)) {
+      if (isLayoutCompatible(C, Field1, *I)) {
         bool Result = UnmatchedFields.erase(*I);
         (void) Result;
         assert(Result);

@@ -147,7 +147,7 @@ static void SetupSerializedDiagnostics(DiagnosticOptions *DiagOpts,
                                        DiagnosticsEngine &Diags,
                                        StringRef OutputFile) {
   std::string ErrorInfo;
-  OwningPtr<llvm::raw_fd_ostream> OS;
+  std::unique_ptr<llvm::raw_fd_ostream> OS;
   OS.reset(new llvm::raw_fd_ostream(OutputFile.str().c_str(), ErrorInfo,
                                     llvm::sys::fs::F_None));
 
@@ -156,11 +156,10 @@ static void SetupSerializedDiagnostics(DiagnosticOptions *DiagOpts,
       << OutputFile << ErrorInfo;
     return;
   }
-  
-  DiagnosticConsumer *SerializedConsumer =
-    clang::serialized_diags::create(OS.take(), DiagOpts);
 
-  
+  DiagnosticConsumer *SerializedConsumer =
+      clang::serialized_diags::create(OS.release(), DiagOpts);
+
   Diags.setClient(new ChainedDiagnosticConsumer(Diags.takeClient(),
                                                 SerializedConsumer));
 }
@@ -335,13 +334,15 @@ CompilerInstance::createPCHExternalASTSource(StringRef Path,
                                              void *DeserializationListener,
                                              bool Preamble,
                                              bool UseGlobalModuleIndex) {
-  OwningPtr<ASTReader> Reader;
+  HeaderSearchOptions &HSOpts = PP.getHeaderSearchInfo().getHeaderSearchOpts();
+
+  std::unique_ptr<ASTReader> Reader;
   Reader.reset(new ASTReader(PP, Context,
                              Sysroot.empty() ? "" : Sysroot.c_str(),
                              DisablePCHValidation,
                              AllowPCHWithCompilerErrors,
                              /*AllowConfigurationMismatch*/false,
-                             /*ValidateSystemInputs*/false,
+                             HSOpts.ModulesValidateSystemHeaders,
                              UseGlobalModuleIndex));
 
   Reader->setDeserializationListener(
@@ -355,7 +356,7 @@ CompilerInstance::createPCHExternalASTSource(StringRef Path,
     // Set the predefines buffer as suggested by the PCH reader. Typically, the
     // predefines buffer will be empty.
     PP.setPredefines(Reader->getSuggestedPredefines());
-    return Reader.take();
+    return Reader.release();
 
   case ASTReader::Failure:
     // Unrecoverable failure: don't even try to process the input file.
@@ -540,7 +541,7 @@ CompilerInstance::createOutputFile(StringRef OutputPath,
     OutFile = "-";
   }
 
-  OwningPtr<llvm::raw_fd_ostream> OS;
+  std::unique_ptr<llvm::raw_fd_ostream> OS;
   std::string OSFile;
 
   if (UseTemporary) {
@@ -607,7 +608,7 @@ CompilerInstance::createOutputFile(StringRef OutputPath,
   if (TempPathName)
     *TempPathName = TempFile;
 
-  return OS.take();
+  return OS.release();
 }
 
 // Initialization Utilities
@@ -663,7 +664,7 @@ bool CompilerInstance::InitializeSourceManager(const FrontendInputFile &Input,
 
     SourceMgr.createMainFileID(File, Kind);
   } else {
-    OwningPtr<llvm::MemoryBuffer> SB;
+    std::unique_ptr<llvm::MemoryBuffer> SB;
     if (llvm::error_code ec = llvm::MemoryBuffer::getSTDIN(SB)) {
       Diags.Report(diag::err_fe_error_reading_stdin) << ec.message();
       return false;
@@ -671,7 +672,7 @@ bool CompilerInstance::InitializeSourceManager(const FrontendInputFile &Input,
     const FileEntry *File = FileMgr.getVirtualFile(SB->getBufferIdentifier(),
                                                    SB->getBufferSize(), 0);
     SourceMgr.createMainFileID(File, Kind);
-    SourceMgr.overrideFileContents(File, SB.take());
+    SourceMgr.overrideFileContents(File, SB.release());
   }
 
   assert(!SourceMgr.getMainFileID().isInvalid() &&
@@ -1142,14 +1143,15 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
         pruneModuleCache(getHeaderSearchOpts());
       }
 
-      std::string Sysroot = getHeaderSearchOpts().Sysroot;
+      HeaderSearchOptions &HSOpts = getHeaderSearchOpts();
+      std::string Sysroot = HSOpts.Sysroot;
       const PreprocessorOptions &PPOpts = getPreprocessorOpts();
       ModuleManager = new ASTReader(getPreprocessor(), *Context,
                                     Sysroot.empty() ? "" : Sysroot.c_str(),
                                     PPOpts.DisablePCHValidation,
                                     /*AllowASTWithCompilerErrors=*/false,
                                     /*AllowConfigurationMismatch=*/false,
-                                    /*ValidateSystemInputs=*/false,
+                                    HSOpts.ModulesValidateSystemHeaders,
                                     getFrontendOpts().UseGlobalModuleIndex);
       if (hasASTConsumer()) {
         ModuleManager->setDeserializationListener(

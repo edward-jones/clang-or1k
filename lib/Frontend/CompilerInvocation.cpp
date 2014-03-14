@@ -19,7 +19,6 @@
 #include "clang/Lex/HeaderSearchOptions.h"
 #include "clang/Serialization/ASTReader.h"
 #include "llvm/ADT/Hashing.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -35,6 +34,7 @@
 #include "llvm/Support/Process.h"
 #include "llvm/Support/system_error.h"
 #include <atomic>
+#include <memory>
 #include <sys/stat.h>
 using namespace clang;
 
@@ -528,6 +528,7 @@ static void ParseDependencyOutputArgs(DependencyOutputOptions &Opts,
   Opts.OutputFile = Args.getLastArgValue(OPT_dependency_file);
   Opts.Targets = Args.getAllArgValues(OPT_MT);
   Opts.IncludeSystemHeaders = Args.hasArg(OPT_sys_header_deps);
+  Opts.IncludeModuleFiles = Args.hasArg(OPT_module_file_deps);
   Opts.UsePhonyTargets = Args.hasArg(OPT_MP);
   Opts.ShowHeaderIncludes = Args.hasArg(OPT_H);
   Opts.HeaderIncludeOutputFile = Args.getLastArgValue(OPT_header_include_file);
@@ -930,6 +931,9 @@ static void ParseHeaderSearchArgs(HeaderSearchOptions &Opts, ArgList &Args) {
       Args.hasArg(OPT_fmodules_validate_once_per_build_session);
   Opts.BuildSessionTimestamp =
       getLastArgUInt64Value(Args, OPT_fbuild_session_timestamp, 0);
+  Opts.ModulesValidateSystemHeaders =
+      Args.hasArg(OPT_fmodules_validate_system_headers);
+
   for (arg_iterator it = Args.filtered_begin(OPT_fmodules_ignore_macro),
                     ie = Args.filtered_end();
        it != ie; ++it) {
@@ -1669,12 +1673,12 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
   bool Success = true;
 
   // Parse the arguments.
-  OwningPtr<OptTable> Opts(createDriverOptTable());
+  std::unique_ptr<OptTable> Opts(createDriverOptTable());
   const unsigned IncludedFlagsBitmask = options::CC1Option;
   unsigned MissingArgIndex, MissingArgCount;
-  OwningPtr<InputArgList> Args(
-    Opts->ParseArgs(ArgBegin, ArgEnd, MissingArgIndex, MissingArgCount,
-                    IncludedFlagsBitmask));
+  std::unique_ptr<InputArgList> Args(
+      Opts->ParseArgs(ArgBegin, ArgEnd, MissingArgIndex, MissingArgCount,
+                      IncludedFlagsBitmask));
 
   // Check for missing argument error.
   if (MissingArgCount) {
@@ -1834,7 +1838,7 @@ std::string CompilerInvocation::getModuleHash() const {
   //   $sysroot/System/Library/CoreServices/SystemVersion.plist
   // as part of the module hash.
   if (!hsOpts.Sysroot.empty()) {
-    llvm::OwningPtr<llvm::MemoryBuffer> buffer;
+    std::unique_ptr<llvm::MemoryBuffer> buffer;
     SmallString<128> systemVersionFile;
     systemVersionFile += hsOpts.Sysroot;
     llvm::sys::path::append(systemVersionFile, "System");

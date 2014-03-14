@@ -17,6 +17,7 @@
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Config/config.h"
 #include "gtest/gtest.h"
 #include <string>
 
@@ -107,7 +108,7 @@ TEST(runToolOnCode, FindsClassDecl) {
 }
 
 TEST(buildASTFromCode, FindsClassDecl) {
-  OwningPtr<ASTUnit> AST(buildASTFromCode("class X;"));
+  std::unique_ptr<ASTUnit> AST(buildASTFromCode("class X;"));
   ASSERT_TRUE(AST.get());
   EXPECT_TRUE(FindClassDeclX(AST.get()));
 
@@ -117,9 +118,9 @@ TEST(buildASTFromCode, FindsClassDecl) {
 }
 
 TEST(newFrontendActionFactory, CreatesFrontendActionFactoryFromType) {
-  OwningPtr<FrontendActionFactory> Factory(
+  std::unique_ptr<FrontendActionFactory> Factory(
       newFrontendActionFactory<SyntaxOnlyAction>());
-  OwningPtr<FrontendAction> Action(Factory->create());
+  std::unique_ptr<FrontendAction> Action(Factory->create());
   EXPECT_TRUE(Action.get() != NULL);
 }
 
@@ -131,9 +132,9 @@ struct IndependentFrontendActionCreator {
 
 TEST(newFrontendActionFactory, CreatesFrontendActionFactoryFromFactoryType) {
   IndependentFrontendActionCreator Creator;
-  OwningPtr<FrontendActionFactory> Factory(
+  std::unique_ptr<FrontendActionFactory> Factory(
       newFrontendActionFactory(&Creator));
-  OwningPtr<FrontendAction> Action(Factory->create());
+  std::unique_ptr<FrontendAction> Action(Factory->create());
   EXPECT_TRUE(Action.get() != NULL);
 }
 
@@ -192,7 +193,7 @@ struct VerifyEndCallback : public SourceFileCallbacks {
   bool Matched;
 };
 
-#if !defined(_WIN32)
+#if !defined(LLVM_ON_WIN32)
 TEST(newFrontendActionFactory, InjectsSourceFileCallbacks) {
   VerifyEndCallback EndCallback;
 
@@ -292,7 +293,7 @@ TEST(ClangToolTest, ArgumentAdjusters) {
   EXPECT_FALSE(Found);
 }
 
-#ifndef _WIN32
+#ifndef LLVM_ON_WIN32
 TEST(ClangToolTest, BuildASTs) {
   FixedCompilationDatabase Compilations("/", std::vector<std::string>());
 

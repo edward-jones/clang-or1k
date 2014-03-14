@@ -762,7 +762,7 @@ void ASTDumper::dumpDecl(const Decl *D) {
     if (ND->isHidden())
       OS << " hidden";
 
-  bool HasAttrs = D->attr_begin() != D->attr_end();
+  bool HasAttrs = D->hasAttrs();
   const FullComment *Comment =
       D->getASTContext().getLocalCommentForDeclUncached(D);
   // Decls within functions are visited by the body
@@ -1030,15 +1030,13 @@ void ASTDumper::VisitCXXRecordDecl(const CXXRecordDecl *D) {
   if (!D->isCompleteDefinition())
     return;
 
-  for (CXXRecordDecl::base_class_const_iterator I = D->bases_begin(),
-                                                E = D->bases_end();
-       I != E; ++I) {
+  for (const auto &I : D->bases()) {
     IndentScope Indent(*this);
-    if (I->isVirtual())
+    if (I.isVirtual())
       OS << "virtual ";
-    dumpAccessSpecifier(I->getAccessSpecifier());
-    dumpType(I->getType());
-    if (I->isPackExpansion())
+    dumpAccessSpecifier(I.getAccessSpecifier());
+    dumpType(I.getType());
+    if (I.isPackExpansion())
       OS << "...";
   }
 }
@@ -1439,9 +1437,8 @@ void ASTDumper::VisitObjCPropertyImplDecl(const ObjCPropertyImplDecl *D) {
 }
 
 void ASTDumper::VisitBlockDecl(const BlockDecl *D) {
-  for (BlockDecl::param_const_iterator I = D->param_begin(), E = D->param_end();
-       I != E; ++I)
-    dumpDecl(*I);
+  for (auto I : D->params())
+    dumpDecl(I);
 
   if (D->isVariadic()) {
     IndentScope Indent(*this);

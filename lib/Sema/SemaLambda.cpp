@@ -418,10 +418,8 @@ CXXMethodDecl *Sema::startLambdaDefinition(CXXRecordDecl *Class,
                              const_cast<ParmVarDecl **>(Params.end()),
                              /*CheckParameterNames=*/false);
     
-    for (CXXMethodDecl::param_iterator P = Method->param_begin(), 
-                                    PEnd = Method->param_end();
-         P != PEnd; ++P)
-      (*P)->setOwningFunction(Method);
+    for (auto P : Method->params())
+      P->setOwningFunction(Method);
   }
 
   Decl *ManglingContextDecl;
@@ -738,6 +736,9 @@ QualType Sema::performLambdaInitCaptureInitialization(SourceLocation Loc,
       return QualType();
     } else {
       DeduceInit = CXXDirectInit->getExpr(0);
+      if (isa<InitListExpr>(DeduceInit))
+        Diag(CXXDirectInit->getLocStart(), diag::err_init_capture_paren_braces)
+          << DeclarationName(Id) << Loc;
     }
   }
 
@@ -1148,12 +1149,9 @@ void Sema::ActOnLambdaError(SourceLocation StartLoc, Scope *CurScope,
   LambdaScopeInfo *LSI = getCurLambda();
   CXXRecordDecl *Class = LSI->Lambda;
   Class->setInvalidDecl();
-  SmallVector<Decl*, 4> Fields;
-  for (RecordDecl::field_iterator i = Class->field_begin(),
-                                  e = Class->field_end(); i != e; ++i)
-    Fields.push_back(*i);
-  ActOnFields(0, Class->getLocation(), Class, Fields, 
-              SourceLocation(), SourceLocation(), 0);
+  SmallVector<Decl*, 4> Fields(Class->fields());
+  ActOnFields(0, Class->getLocation(), Class, Fields, SourceLocation(),
+              SourceLocation(), 0);
   CheckCompletedCXXClass(Class);
 
   PopFunctionScopeInfo();
@@ -1511,12 +1509,9 @@ ExprResult Sema::ActOnLambdaExpr(SourceLocation StartLoc, Stmt *Body,
       addBlockPointerConversion(*this, IntroducerRange, Class, CallOperator);
     
     // Finalize the lambda class.
-    SmallVector<Decl*, 4> Fields;
-    for (RecordDecl::field_iterator i = Class->field_begin(),
-                                    e = Class->field_end(); i != e; ++i)
-      Fields.push_back(*i);
-    ActOnFields(0, Class->getLocation(), Class, Fields, 
-                SourceLocation(), SourceLocation(), 0);
+    SmallVector<Decl*, 4> Fields(Class->fields());
+    ActOnFields(0, Class->getLocation(), Class, Fields, SourceLocation(),
+                SourceLocation(), 0);
     CheckCompletedCXXClass(Class);
   }
 

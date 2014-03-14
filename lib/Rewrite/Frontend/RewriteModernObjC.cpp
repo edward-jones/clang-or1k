@@ -24,11 +24,11 @@
 #include "clang/Lex/Lexer.h"
 #include "clang/Rewrite/Core/Rewriter.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
+#include <memory>
 
 using namespace clang;
 using llvm::utostr;
@@ -1160,18 +1160,13 @@ void RewriteModernObjC::RewriteCategoryDecl(ObjCCategoryDecl *CatDecl) {
     ReplaceText(LocStart, 0, "// ");
   }
   
-  for (ObjCCategoryDecl::prop_iterator I = CatDecl->prop_begin(),
-       E = CatDecl->prop_end(); I != E; ++I)
-    RewriteProperty(*I);
+  for (auto *I : CatDecl->properties())
+    RewriteProperty(I);
   
-  for (ObjCCategoryDecl::instmeth_iterator
-         I = CatDecl->instmeth_begin(), E = CatDecl->instmeth_end();
-       I != E; ++I)
-    RewriteMethodDeclaration(*I);
-  for (ObjCCategoryDecl::classmeth_iterator
-         I = CatDecl->classmeth_begin(), E = CatDecl->classmeth_end();
-       I != E; ++I)
-    RewriteMethodDeclaration(*I);
+  for (auto *I : CatDecl->instance_methods())
+    RewriteMethodDeclaration(I);
+  for (auto *I : CatDecl->class_methods())
+    RewriteMethodDeclaration(I);
 
   // Lastly, comment out the @end.
   ReplaceText(CatDecl->getAtEndRange().getBegin(), 
@@ -1185,18 +1180,12 @@ void RewriteModernObjC::RewriteProtocolDecl(ObjCProtocolDecl *PDecl) {
   // FIXME: handle protocol headers that are declared across multiple lines.
   ReplaceText(LocStart, 0, "// ");
 
-  for (ObjCProtocolDecl::instmeth_iterator
-         I = PDecl->instmeth_begin(), E = PDecl->instmeth_end();
-       I != E; ++I)
-    RewriteMethodDeclaration(*I);
-  for (ObjCProtocolDecl::classmeth_iterator
-         I = PDecl->classmeth_begin(), E = PDecl->classmeth_end();
-       I != E; ++I)
-    RewriteMethodDeclaration(*I);
-
-  for (ObjCInterfaceDecl::prop_iterator I = PDecl->prop_begin(),
-       E = PDecl->prop_end(); I != E; ++I)
-    RewriteProperty(*I);
+  for (auto *I : PDecl->instance_methods())
+    RewriteMethodDeclaration(I);
+  for (auto *I : PDecl->class_methods())
+    RewriteMethodDeclaration(I);
+  for (auto *I : PDecl->properties())
+    RewriteProperty(I);
   
   // Lastly, comment out the @end.
   SourceLocation LocEnd = PDecl->getAtEndRange().getBegin();
@@ -1337,9 +1326,7 @@ void RewriteModernObjC::RewriteObjCMethodDecl(const ObjCInterfaceDecl *IDecl,
   ResultStr += " _cmd";
 
   // Method arguments.
-  for (ObjCMethodDecl::param_iterator PI = OMD->param_begin(),
-       E = OMD->param_end(); PI != E; ++PI) {
-    ParmVarDecl *PDecl = *PI;
+  for (const auto *PDecl : OMD->params()) {
     ResultStr += ", ";
     if (PDecl->getType()->isObjCQualifiedIdType()) {
       ResultStr += "id ";
@@ -1396,12 +1383,8 @@ void RewriteModernObjC::RewriteImplementationDecl(Decl *OID) {
   else
     InsertText(CID->getLocStart(), "// ");
 
-  for (ObjCCategoryImplDecl::instmeth_iterator
-       I = IMD ? IMD->instmeth_begin() : CID->instmeth_begin(),
-       E = IMD ? IMD->instmeth_end() : CID->instmeth_end();
-       I != E; ++I) {
+  for (auto *OMD : IMD ? IMD->instance_methods() : CID->instance_methods()) {
     std::string ResultStr;
-    ObjCMethodDecl *OMD = *I;
     RewriteObjCMethodDecl(OMD->getClassInterface(), OMD, ResultStr);
     SourceLocation LocStart = OMD->getLocStart();
     SourceLocation LocEnd = OMD->getCompoundBody()->getLocStart();
@@ -1411,12 +1394,8 @@ void RewriteModernObjC::RewriteImplementationDecl(Decl *OID) {
     ReplaceText(LocStart, endBuf-startBuf, ResultStr);
   }
 
-  for (ObjCCategoryImplDecl::classmeth_iterator
-       I = IMD ? IMD->classmeth_begin() : CID->classmeth_begin(),
-       E = IMD ? IMD->classmeth_end() : CID->classmeth_end();
-       I != E; ++I) {
+  for (auto *OMD : IMD ? IMD->class_methods() : CID->class_methods()) {
     std::string ResultStr;
-    ObjCMethodDecl *OMD = *I;
     RewriteObjCMethodDecl(OMD->getClassInterface(), OMD, ResultStr);
     SourceLocation LocStart = OMD->getLocStart();
     SourceLocation LocEnd = OMD->getCompoundBody()->getLocStart();
@@ -1455,17 +1434,12 @@ void RewriteModernObjC::RewriteInterfaceDecl(ObjCInterfaceDecl *ClassDecl) {
     // Mark this typedef as having been written into its c++ equivalent.
     ObjCWrittenInterfaces.insert(ClassDecl->getCanonicalDecl());
   
-    for (ObjCInterfaceDecl::prop_iterator I = ClassDecl->prop_begin(),
-         E = ClassDecl->prop_end(); I != E; ++I)
-      RewriteProperty(*I);
-    for (ObjCInterfaceDecl::instmeth_iterator
-         I = ClassDecl->instmeth_begin(), E = ClassDecl->instmeth_end();
-         I != E; ++I)
-      RewriteMethodDeclaration(*I);
-    for (ObjCInterfaceDecl::classmeth_iterator
-         I = ClassDecl->classmeth_begin(), E = ClassDecl->classmeth_end();
-         I != E; ++I)
-      RewriteMethodDeclaration(*I);
+    for (auto *I : ClassDecl->properties())
+      RewriteProperty(I);
+    for (auto *I : ClassDecl->instance_methods())
+      RewriteMethodDeclaration(I);
+    for (auto *I : ClassDecl->class_methods())
+      RewriteMethodDeclaration(I);
 
     // Lastly, comment out the @end.
     ReplaceText(ClassDecl->getAtEndRange().getBegin(), strlen("@end"), 
@@ -2733,9 +2707,8 @@ Stmt *RewriteModernObjC::RewriteObjCBoxedExpr(ObjCBoxedExpr *Exp) {
   SmallVector<QualType, 4> ArgTypes;
   ArgTypes.push_back(Context->getObjCIdType());
   ArgTypes.push_back(Context->getObjCSelType());
-  for (ObjCMethodDecl::param_iterator PI = BoxingMethod->param_begin(),
-       E = BoxingMethod->param_end(); PI != E; ++PI)
-    ArgTypes.push_back((*PI)->getType());
+  for (const auto PI : BoxingMethod->parameters())
+    ArgTypes.push_back(PI->getType());
   
   QualType returnType = Exp->getType();
   // Get the type, we will need to reference it in a couple spots.
@@ -2863,9 +2836,8 @@ Stmt *RewriteModernObjC::RewriteObjCArrayLiteralExpr(ObjCArrayLiteral *Exp) {
   SmallVector<QualType, 4> ArgTypes;
   ArgTypes.push_back(Context->getObjCIdType());
   ArgTypes.push_back(Context->getObjCSelType());
-  for (ObjCMethodDecl::param_iterator PI = ArrayMethod->param_begin(),
-       E = ArrayMethod->param_end(); PI != E; ++PI)
-    ArgTypes.push_back((*PI)->getType());
+  for (const auto *PI : ArrayMethod->params())
+    ArgTypes.push_back(PI->getType());
   
   QualType returnType = Exp->getType();
   // Get the type, we will need to reference it in a couple spots.
@@ -3021,9 +2993,8 @@ Stmt *RewriteModernObjC::RewriteObjCDictionaryLiteralExpr(ObjCDictionaryLiteral 
   SmallVector<QualType, 8> ArgTypes;
   ArgTypes.push_back(Context->getObjCIdType());
   ArgTypes.push_back(Context->getObjCSelType());
-  for (ObjCMethodDecl::param_iterator PI = DictMethod->param_begin(),
-       E = DictMethod->param_end(); PI != E; ++PI) {
-    QualType T = (*PI)->getType();
+  for (const auto *PI : DictMethod->params()) {
+    QualType T = PI->getType();
     if (const PointerType* PT = T->getAs<PointerType>()) {
       QualType PointeeTy = PT->getPointeeType();
       convertToUnqualifiedObjCType(PointeeTy);
@@ -3600,11 +3571,10 @@ Stmt *RewriteModernObjC::SynthMessageExpr(ObjCMessageExpr *Exp,
   ArgTypes.push_back(Context->getObjCSelType());
   if (ObjCMethodDecl *OMD = Exp->getMethodDecl()) {
     // Push any user argument types.
-    for (ObjCMethodDecl::param_iterator PI = OMD->param_begin(),
-         E = OMD->param_end(); PI != E; ++PI) {
-      QualType t = (*PI)->getType()->isObjCQualifiedIdType()
+    for (const auto *PI : OMD->params()) {
+      QualType t = PI->getType()->isObjCQualifiedIdType()
                      ? Context->getObjCIdType()
-                     : (*PI)->getType();
+                     : PI->getType();
       // Make sure we convert "t (^)(...)" to "t (*)(...)".
       (void)convertBlockPointerToFunctionPointer(t);
       ArgTypes.push_back(t);
@@ -3794,11 +3764,8 @@ bool RewriteModernObjC::RewriteObjCFieldDeclType(QualType &Type,
         return true;
       }
       Result += " {\n";
-      for (RecordDecl::field_iterator i = RD->field_begin(), 
-           e = RD->field_end(); i != e; ++i) {
-        FieldDecl *FD = *i;
+      for (auto *FD : RD->fields())
         RewriteObjCFieldDecl(FD, Result);
-      }
       Result += "\t} "; 
       return true;
     }
@@ -3815,8 +3782,7 @@ bool RewriteModernObjC::RewriteObjCFieldDeclType(QualType &Type,
       }
       
       Result += " {\n";
-      for (EnumDecl::enumerator_iterator EC = ED->enumerator_begin(),
-           ECEnd = ED->enumerator_end(); EC != ECEnd; ++EC) {
+      for (const auto *EC : ED->enumerators()) {
         Result += "\t"; Result += EC->getName(); Result += " = ";
         llvm::APSInt Val = EC->getInitVal();
         Result += Val.toString(10);
@@ -5854,9 +5820,7 @@ Stmt *RewriteModernObjC::RewriteFunctionBodyOrGlobalInitializer(Stmt *S) {
 }
 
 void RewriteModernObjC::RewriteRecordBody(RecordDecl *RD) {
-  for (RecordDecl::field_iterator i = RD->field_begin(), 
-                                  e = RD->field_end(); i != e; ++i) {
-    FieldDecl *FD = *i;
+  for (auto *FD : RD->fields()) {
     if (isTopLevelBlockPointerType(FD->getType()))
       RewriteBlockPointerDecl(FD);
     if (FD->getType()->isObjCQualifiedIdType() ||
@@ -7032,17 +6996,13 @@ void RewriteModernObjC::RewriteObjCProtocolMetaData(ObjCProtocolDecl *PDecl,
     PDecl = Def;
   // Must write out all protocol definitions in current qualifier list,
   // and in their nested qualifiers before writing out current definition.
-  for (ObjCProtocolDecl::protocol_iterator I = PDecl->protocol_begin(),
-       E = PDecl->protocol_end(); I != E; ++I)
-    RewriteObjCProtocolMetaData(*I, Result);
+  for (auto *I : PDecl->protocols())
+    RewriteObjCProtocolMetaData(I, Result);
   
   // Construct method lists.
   std::vector<ObjCMethodDecl *> InstanceMethods, ClassMethods;
   std::vector<ObjCMethodDecl *> OptInstanceMethods, OptClassMethods;
-  for (ObjCProtocolDecl::instmeth_iterator
-       I = PDecl->instmeth_begin(), E = PDecl->instmeth_end();
-       I != E; ++I) {
-    ObjCMethodDecl *MD = *I;
+  for (auto *MD : PDecl->instance_methods()) {
     if (MD->getImplementationControl() == ObjCMethodDecl::Optional) {
       OptInstanceMethods.push_back(MD);
     } else {
@@ -7050,10 +7010,7 @@ void RewriteModernObjC::RewriteObjCProtocolMetaData(ObjCProtocolDecl *PDecl,
     }
   }
   
-  for (ObjCProtocolDecl::classmeth_iterator
-       I = PDecl->classmeth_begin(), E = PDecl->classmeth_end();
-       I != E; ++I) {
-    ObjCMethodDecl *MD = *I;
+  for (auto *MD : PDecl->class_methods()) {
     if (MD->getImplementationControl() == ObjCMethodDecl::Optional) {
       OptClassMethods.push_back(MD);
     } else {
@@ -7075,11 +7032,7 @@ void RewriteModernObjC::RewriteObjCProtocolMetaData(ObjCProtocolDecl *PDecl,
                                          "_OBJC_PROTOCOL_METHOD_TYPES_",
                                          PDecl->getNameAsString());
   // Protocol's super protocol list
-  std::vector<ObjCProtocolDecl *> SuperProtocols;
-  for (ObjCProtocolDecl::protocol_iterator I = PDecl->protocol_begin(),
-       E = PDecl->protocol_end(); I != E; ++I)
-    SuperProtocols.push_back(*I);
-  
+  SmallVector<ObjCProtocolDecl *, 8> SuperProtocols(PDecl->protocols());  
   Write_protocol_list_initializer(Context, Result, SuperProtocols,
                                   "_OBJC_PROTOCOL_REFS_",
                                   PDecl->getNameAsString());
@@ -7101,11 +7054,7 @@ void RewriteModernObjC::RewriteObjCProtocolMetaData(ObjCProtocolDecl *PDecl,
                                   PDecl->getNameAsString(), false);
   
   // Protocol's property metadata.
-  std::vector<ObjCPropertyDecl *> ProtocolProperties;
-  for (ObjCContainerDecl::prop_iterator I = PDecl->prop_begin(),
-       E = PDecl->prop_end(); I != E; ++I)
-    ProtocolProperties.push_back(*I);
-  
+  SmallVector<ObjCPropertyDecl *, 8> ProtocolProperties(PDecl->properties());
   Write_prop_list_t_initializer(*this, Context, Result, ProtocolProperties,
                                  /* Container */0,
                                  "_OBJC_PROTOCOL_PROPERTIES_",
@@ -7267,8 +7216,7 @@ void RewriteModernObjC::RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
                                  CDecl);
   
   // Build _objc_method_list for class's instance methods if needed
-  SmallVector<ObjCMethodDecl *, 32>
-    InstanceMethods(IDecl->instmeth_begin(), IDecl->instmeth_end());
+  SmallVector<ObjCMethodDecl *, 32> InstanceMethods(IDecl->instance_methods());
   
   // If any of our property implementations have associated getters or
   // setters, produce metadata for them as well.
@@ -7296,8 +7244,7 @@ void RewriteModernObjC::RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
                                   "_OBJC_$_INSTANCE_METHODS_",
                                   IDecl->getNameAsString(), true);
   
-  SmallVector<ObjCMethodDecl *, 32>
-    ClassMethods(IDecl->classmeth_begin(), IDecl->classmeth_end());
+  SmallVector<ObjCMethodDecl *, 32> ClassMethods(IDecl->class_methods());
   
   Write_method_list_t_initializer(*this, Context, Result, ClassMethods,
                                   "_OBJC_$_CLASS_METHODS_",
@@ -7322,11 +7269,7 @@ void RewriteModernObjC::RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
                                   IDecl->getNameAsString());
   
   // Protocol's property metadata.
-  std::vector<ObjCPropertyDecl *> ClassProperties;
-  for (ObjCContainerDecl::prop_iterator I = CDecl->prop_begin(),
-       E = CDecl->prop_end(); I != E; ++I)
-    ClassProperties.push_back(*I);
-  
+  SmallVector<ObjCPropertyDecl *, 8> ClassProperties(CDecl->properties());
   Write_prop_list_t_initializer(*this, Context, Result, ClassProperties,
                                  /* Container */IDecl,
                                  "_OBJC_$_PROP_LIST_",
@@ -7528,8 +7471,7 @@ void RewriteModernObjC::RewriteObjCCategoryImplDecl(ObjCCategoryImplDecl *IDecl,
   FullCategoryName += CDecl->getNameAsString();
   
   // Build _objc_method_list for class's instance methods if needed
-  SmallVector<ObjCMethodDecl *, 32>
-  InstanceMethods(IDecl->instmeth_begin(), IDecl->instmeth_end());
+  SmallVector<ObjCMethodDecl *, 32> InstanceMethods(IDecl->instance_methods());
   
   // If any of our property implementations have associated getters or
   // setters, produce metadata for them as well.
@@ -7555,8 +7497,7 @@ void RewriteModernObjC::RewriteObjCCategoryImplDecl(ObjCCategoryImplDecl *IDecl,
                                   "_OBJC_$_CATEGORY_INSTANCE_METHODS_",
                                   FullCategoryName, true);
   
-  SmallVector<ObjCMethodDecl *, 32>
-    ClassMethods(IDecl->classmeth_begin(), IDecl->classmeth_end());
+  SmallVector<ObjCMethodDecl *, 32> ClassMethods(IDecl->class_methods());
   
   Write_method_list_t_initializer(*this, Context, Result, ClassMethods,
                                   "_OBJC_$_CATEGORY_CLASS_METHODS_",
@@ -7565,8 +7506,8 @@ void RewriteModernObjC::RewriteObjCCategoryImplDecl(ObjCCategoryImplDecl *IDecl,
   // Protocols referenced in class declaration?
   // Protocol's super protocol list
   std::vector<ObjCProtocolDecl *> RefedProtocols;
-  for (ObjCInterfaceDecl::protocol_iterator I = CDecl->protocol_begin(),
-                                            E = CDecl->protocol_end();
+  for (ObjCCategoryDecl::protocol_iterator I = CDecl->protocol_begin(),
+                                           E = CDecl->protocol_end();
 
          I != E; ++I) {
     RefedProtocols.push_back(*I);
@@ -7581,11 +7522,7 @@ void RewriteModernObjC::RewriteObjCCategoryImplDecl(ObjCCategoryImplDecl *IDecl,
                                   FullCategoryName);
   
   // Protocol's property metadata.
-  std::vector<ObjCPropertyDecl *> ClassProperties;
-  for (ObjCContainerDecl::prop_iterator I = CDecl->prop_begin(),
-       E = CDecl->prop_end(); I != E; ++I)
-    ClassProperties.push_back(*I);
-  
+  SmallVector<ObjCPropertyDecl *, 8> ClassProperties(CDecl->properties());
   Write_prop_list_t_initializer(*this, Context, Result, ClassProperties,
                                 /* Container */IDecl,
                                 "_OBJC_$_PROP_LIST_",
