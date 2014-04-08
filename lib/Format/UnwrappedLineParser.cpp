@@ -74,7 +74,7 @@ public:
     StructuralError = PreviousStructuralError;
   }
 
-  virtual FormatToken *getNextToken() {
+  FormatToken *getNextToken() override {
     // The \c UnwrappedLineParser guards against this by never calling
     // \c getNextToken() after it has encountered the first eof token.
     assert(!eof());
@@ -84,9 +84,9 @@ public:
     return Token;
   }
 
-  virtual unsigned getPosition() { return PreviousTokenSource->getPosition(); }
+  unsigned getPosition() override { return PreviousTokenSource->getPosition(); }
 
-  virtual FormatToken *setPosition(unsigned Position) {
+  FormatToken *setPosition(unsigned Position) override {
     Token = PreviousTokenSource->setPosition(Position);
     return Token;
   }
@@ -180,17 +180,17 @@ public:
   IndexedTokenSource(ArrayRef<FormatToken *> Tokens)
       : Tokens(Tokens), Position(-1) {}
 
-  virtual FormatToken *getNextToken() {
+  FormatToken *getNextToken() override {
     ++Position;
     return Tokens[Position];
   }
 
-  virtual unsigned getPosition() {
+  unsigned getPosition() override {
     assert(Position >= 0);
     return Position;
   }
 
-  virtual FormatToken *setPosition(unsigned P) {
+  FormatToken *setPosition(unsigned P) override {
     Position = P;
     return Tokens[Position];
   }
@@ -654,6 +654,12 @@ void UnwrappedLineParser::parseStructuralElement() {
         return;
       }
     }
+    break;
+  case tok::identifier:
+    if (FormatTok->IsForEachMacro) {
+      parseForOrWhileLoop();
+      return;
+    }
     // In all other cases, parse the declaration.
     break;
   default:
@@ -694,9 +700,13 @@ void UnwrappedLineParser::parseStructuralElement() {
       break;
     case tok::caret:
       nextToken();
-      if (FormatTok->is(tok::l_brace)) {
+      if (FormatTok->Tok.isAnyIdentifier() ||
+          FormatTok->isSimpleTypeSpecifier())
+        nextToken();
+      if (FormatTok->is(tok::l_paren))
+        parseParens();
+      if (FormatTok->is(tok::l_brace))
         parseChildBlock();
-      }
       break;
     case tok::l_brace:
       if (!tryToParseBracedList()) {
@@ -726,7 +736,7 @@ void UnwrappedLineParser::parseStructuralElement() {
         if (FormatTok->Tok.is(tok::l_paren)) {
           parseParens();
           if (FormatTok->NewlinesBefore > 0 &&
-              tokenCanStartNewLine(FormatTok->Tok)) {
+              tokenCanStartNewLine(FormatTok->Tok) && Text == Text.upper()) {
             addUnwrappedLine();
             return;
           }
@@ -1037,8 +1047,9 @@ void UnwrappedLineParser::parseNamespace() {
 }
 
 void UnwrappedLineParser::parseForOrWhileLoop() {
-  assert((FormatTok->Tok.is(tok::kw_for) || FormatTok->Tok.is(tok::kw_while)) &&
-         "'for' or 'while' expected");
+  assert((FormatTok->Tok.is(tok::kw_for) || FormatTok->Tok.is(tok::kw_while) ||
+          FormatTok->IsForEachMacro) &&
+         "'for', 'while' or foreach macro expected");
   nextToken();
   if (FormatTok->Tok.is(tok::l_paren))
     parseParens();
@@ -1215,7 +1226,7 @@ void UnwrappedLineParser::parseRecord() {
         Style.BreakBeforeBraces == FormatStyle::BS_GNU)
       addUnwrappedLine();
 
-    parseBlock(/*MustBeDeclaration=*/true, /*Addlevel=*/true,
+    parseBlock(/*MustBeDeclaration=*/true, /*AddLevel=*/true,
                /*MunchSemi=*/false);
   }
   // We fall through to parsing a structural element afterwards, so

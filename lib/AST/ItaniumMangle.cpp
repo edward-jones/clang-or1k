@@ -21,6 +21,7 @@
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprObjC.h"
 #include "clang/AST/TypeLoc.h"
@@ -126,6 +127,9 @@ public:
   /// @{
 
   bool shouldMangleCXXName(const NamedDecl *D) override;
+  bool shouldMangleStringLiteral(const StringLiteral *) override {
+    return false;
+  }
   void mangleCXXName(const NamedDecl *D, raw_ostream &) override;
   void mangleThunk(const CXXMethodDecl *MD, const ThunkInfo &Thunk,
                    raw_ostream &) override;
@@ -152,6 +156,8 @@ public:
   void mangleItaniumThreadLocalInit(const VarDecl *D, raw_ostream &) override;
   void mangleItaniumThreadLocalWrapper(const VarDecl *D,
                                        raw_ostream &) override;
+
+  void mangleStringLiteral(const StringLiteral *, raw_ostream &) override;
 
   bool getNextDiscriminator(const NamedDecl *ND, unsigned &disc) {
     // Lambda closure types are already numbered.
@@ -2012,10 +2018,8 @@ void CXXNameMangler::mangleBareFunctionType(const FunctionType *T,
     return;
   }
 
-  for (FunctionProtoType::param_type_iterator Arg = Proto->param_type_begin(),
-                                              ArgEnd = Proto->param_type_end();
-       Arg != ArgEnd; ++Arg)
-    mangleType(Context.getASTContext().getSignatureParameterType(*Arg));
+  for (const auto &Arg : Proto->param_types())
+    mangleType(Context.getASTContext().getSignatureParameterType(Arg));
 
   FunctionTypeDepth.pop(saved);
 
@@ -2149,8 +2153,17 @@ void CXXNameMangler::mangleNeonVectorType(const VectorType *T) {
   const char *EltName = 0;
   if (T->getVectorKind() == VectorType::NeonPolyVector) {
     switch (cast<BuiltinType>(EltType)->getKind()) {
-    case BuiltinType::SChar:     EltName = "poly8_t"; break;
-    case BuiltinType::Short:     EltName = "poly16_t"; break;
+    case BuiltinType::SChar:
+    case BuiltinType::UChar:
+      EltName = "poly8_t";
+      break;
+    case BuiltinType::Short:
+    case BuiltinType::UShort:
+      EltName = "poly16_t";
+      break;
+    case BuiltinType::ULongLong:
+      EltName = "poly64_t";
+      break;
     default: llvm_unreachable("unexpected Neon polynomial vector element type");
     }
   } else {
@@ -2163,6 +2176,7 @@ void CXXNameMangler::mangleNeonVectorType(const VectorType *T) {
     case BuiltinType::UInt:      EltName = "uint32_t"; break;
     case BuiltinType::LongLong:  EltName = "int64_t"; break;
     case BuiltinType::ULongLong: EltName = "uint64_t"; break;
+    case BuiltinType::Double:    EltName = "float64_t"; break;
     case BuiltinType::Float:     EltName = "float32_t"; break;
     case BuiltinType::Half:      EltName = "float16_t";break;
     default:
@@ -2191,6 +2205,7 @@ static StringRef mangleAArch64VectorBase(const BuiltinType *EltType) {
   case BuiltinType::Int:
     return "Int32";
   case BuiltinType::Long:
+  case BuiltinType::LongLong:
     return "Int64";
   case BuiltinType::UChar:
     return "Uint8";
@@ -2199,6 +2214,7 @@ static StringRef mangleAArch64VectorBase(const BuiltinType *EltType) {
   case BuiltinType::UInt:
     return "Uint32";
   case BuiltinType::ULong:
+  case BuiltinType::ULongLong:
     return "Uint64";
   case BuiltinType::Half:
     return "Float16";
@@ -2258,10 +2274,12 @@ void CXXNameMangler::mangleAArch64NeonVectorType(const VectorType *T) {
 void CXXNameMangler::mangleType(const VectorType *T) {
   if ((T->getVectorKind() == VectorType::NeonVector ||
        T->getVectorKind() == VectorType::NeonPolyVector)) {
+    llvm::Triple Target = getASTContext().getTargetInfo().getTriple();
     llvm::Triple::ArchType Arch =
         getASTContext().getTargetInfo().getTriple().getArch();
-    if ((Arch == llvm::Triple::aarch64) ||
-        (Arch == llvm::Triple::aarch64_be))
+    if (Arch == llvm::Triple::aarch64 ||
+        Arch == llvm::Triple::aarch64_be ||
+        (Arch == llvm::Triple::arm64 && !Target.isOSDarwin()))
       mangleAArch64NeonVectorType(T);
     else
       mangleNeonVectorType(T);
@@ -2301,9 +2319,8 @@ void CXXNameMangler::mangleType(const ObjCObjectType *T) {
     SmallString<64> QualStr;
     llvm::raw_svector_ostream QualOS(QualStr);
     QualOS << "objcproto";
-    ObjCObjectType::qual_iterator i = T->qual_begin(), e = T->qual_end();
-    for ( ; i != e; ++i) {
-      StringRef name = (*i)->getName();
+    for (const auto *I : T->quals()) {
+      StringRef name = I->getName();
       QualOS << name.size() << name;
     }
     QualOS.flush();
@@ -3775,6 +3792,10 @@ void ItaniumMangleContextImpl::mangleCXXRTTIName(QualType Ty,
 
 void ItaniumMangleContextImpl::mangleTypeName(QualType Ty, raw_ostream &Out) {
   mangleCXXRTTIName(Ty, Out);
+}
+
+void ItaniumMangleContextImpl::mangleStringLiteral(const StringLiteral *, raw_ostream &) {
+  llvm_unreachable("Can't mangle string literals");
 }
 
 ItaniumMangleContext *

@@ -185,7 +185,7 @@ namespace {
   public:
     llvm::DenseMap<ObjCMethodDecl*, std::string> MethodInternalNames;
     // Top Level Driver code.
-    virtual bool HandleTopLevelDecl(DeclGroupRef D) {
+    bool HandleTopLevelDecl(DeclGroupRef D) override {
       for (DeclGroupRef::iterator I = D.begin(), E = D.end(); I != E; ++I) {
         if (ObjCInterfaceDecl *Class = dyn_cast<ObjCInterfaceDecl>(*I)) {
           if (!Class->isThisDeclarationADefinition()) {
@@ -221,8 +221,8 @@ namespace {
       }
       return true;
     }
-    
-    virtual void HandleTopLevelDeclInObjCContainer(DeclGroupRef D) {
+
+    void HandleTopLevelDeclInObjCContainer(DeclGroupRef D) override {
       for (DeclGroupRef::iterator I = D.begin(), E = D.end(); I != E; ++I) {
         if (TypedefNameDecl *TD = dyn_cast<TypedefNameDecl>(*I)) {
           if (isTopLevelBlockPointerType(TD->getUnderlyingType()))
@@ -243,8 +243,8 @@ namespace {
                 bool silenceMacroWarn, bool LineInfo);
     
     ~RewriteModernObjC() {}
-    
-    virtual void HandleTranslationUnit(ASTContext &C);
+
+    void HandleTranslationUnit(ASTContext &C) override;
 
     void ReplaceStmt(Stmt *Old, Stmt *New) {
       Stmt *ReplacingStmt = ReplacedNodes[Old];
@@ -414,9 +414,9 @@ namespace {
     
     void RewriteIvarOffsetSymbols(ObjCInterfaceDecl *CDecl,
                                   std::string &Result);
-    
-    virtual void Initialize(ASTContext &context);
-    
+
+    void Initialize(ASTContext &context) override;
+
     // Misc. AST transformation routines. Sometimes they end up calling
     // rewriting routines on the new ASTs.
     CallExpr *SynthesizeCallToFunctionDecl(FunctionDecl *FD,
@@ -623,10 +623,8 @@ void RewriteModernObjC::RewriteBlocksInFunctionProtoType(QualType funcType,
                                                    NamedDecl *D) {
   if (const FunctionProtoType *fproto
       = dyn_cast<FunctionProtoType>(funcType.IgnoreParens())) {
-    for (FunctionProtoType::param_type_iterator I = fproto->param_type_begin(),
-                                                E = fproto->param_type_end();
-         I && (I != E); ++I)
-      if (isTopLevelBlockPointerType(*I)) {
+    for (const auto &I : fproto->param_types())
+      if (isTopLevelBlockPointerType(I)) {
         // All the args are checked/rewritten. Don't call twice!
         RewriteBlockPointerDecl(D);
         break;
@@ -1404,12 +1402,8 @@ void RewriteModernObjC::RewriteImplementationDecl(Decl *OID) {
     const char *endBuf = SM->getCharacterData(LocEnd);
     ReplaceText(LocStart, endBuf-startBuf, ResultStr);
   }
-  for (ObjCCategoryImplDecl::propimpl_iterator
-       I = IMD ? IMD->propimpl_begin() : CID->propimpl_begin(),
-       E = IMD ? IMD->propimpl_end() : CID->propimpl_end();
-       I != E; ++I) {
-    RewritePropertyImplDecl(*I, IMD, CID);
-  }
+  for (auto *I : IMD ? IMD->property_impls() : CID->property_impls())
+    RewritePropertyImplDecl(I, IMD, CID);
 
   InsertText(IMD ? IMD->getLocEnd() : CID->getLocEnd(), "// ");
 }
@@ -4664,10 +4658,8 @@ QualType RewriteModernObjC::convertFunctionTypeOfBlocks(const FunctionType *FT) 
   bool modified = convertObjCTypeToCStyleType(Res);
   
   if (FTP) {
-    for (FunctionProtoType::param_type_iterator I = FTP->param_type_begin(),
-                                                E = FTP->param_type_end();
-         I && (I != E); ++I) {
-      QualType t = *I;
+    for (auto &I : FTP->param_types()) {
+      QualType t = I;
       // Make sure we convert "t (^)(...)" to "t (*)(...)".
       if (convertObjCTypeToCStyleType(t))
         modified = true;
@@ -4733,10 +4725,8 @@ Stmt *RewriteModernObjC::SynthesizeBlockCall(CallExpr *Exp, const Expr *BlockExp
   // Push the block argument type.
   ArgTypes.push_back(PtrBlock);
   if (FTP) {
-    for (FunctionProtoType::param_type_iterator I = FTP->param_type_begin(),
-                                                E = FTP->param_type_end();
-         I && (I != E); ++I) {
-      QualType t = *I;
+    for (auto &I : FTP->param_types()) {
+      QualType t = I;
       // Make sure we convert "t (^)(...)" to "t (*)(...)".
       if (!convertBlockPointerToFunctionPointer(t))
         convertToUnqualifiedObjCType(t);
@@ -4954,10 +4944,8 @@ bool RewriteModernObjC::PointerTypeTakesAnyBlockArguments(QualType QT) {
     FTP = BPT->getPointeeType()->getAs<FunctionProtoType>();
   }
   if (FTP) {
-    for (FunctionProtoType::param_type_iterator I = FTP->param_type_begin(),
-                                                E = FTP->param_type_end();
-         I != E; ++I)
-      if (isTopLevelBlockPointerType(*I))
+    for (const auto &I : FTP->param_types())
+      if (isTopLevelBlockPointerType(I))
         return true;
   }
   return false;
@@ -4974,13 +4962,11 @@ bool RewriteModernObjC::PointerTypeTakesAnyObjCQualifiedType(QualType QT) {
     FTP = BPT->getPointeeType()->getAs<FunctionProtoType>();
   }
   if (FTP) {
-    for (FunctionProtoType::param_type_iterator I = FTP->param_type_begin(),
-                                                E = FTP->param_type_end();
-         I != E; ++I) {
-      if ((*I)->isObjCQualifiedIdType())
+    for (const auto &I : FTP->param_types()) {
+      if (I->isObjCQualifiedIdType())
         return true;
-      if ((*I)->isObjCObjectPointerType() &&
-          (*I)->getPointeeType()->isObjCQualifiedInterfaceType())
+      if (I->isObjCObjectPointerType() &&
+          I->getPointeeType()->isObjCQualifiedInterfaceType())
         return true;
     }
         
@@ -5513,11 +5499,10 @@ Stmt *RewriteModernObjC::SynthBlockInitExpr(BlockExpr *Exp,
                                       SourceLocation());
       bool isNestedCapturedVar = false;
       if (block)
-        for (BlockDecl::capture_const_iterator ci = block->capture_begin(),
-             ce = block->capture_end(); ci != ce; ++ci) {
-          const VarDecl *variable = ci->getVariable();
-          if (variable == ND && ci->isNested()) {
-            assert (ci->isByRef() && 
+        for (const auto &CI : block->captures()) {
+          const VarDecl *variable = CI.getVariable();
+          if (variable == ND && CI.isNested()) {
+            assert (CI.isByRef() && 
                     "SynthBlockInitExpr - captured block variable is not byref");
             isNestedCapturedVar = true;
             break;
@@ -6123,7 +6108,11 @@ void RewriteModernObjC::Initialize(ASTContext &context) {
   Preamble += "  int *isa;\n";
   Preamble += "  int flags;\n";
   Preamble += "  char *str;\n";
+  Preamble += "#if __LLP64__\n";
+  Preamble += "  long long length;\n";
+  Preamble += "#else\n";
   Preamble += "  long length;\n";
+  Preamble += "#endif\n";
   Preamble += "};\n";
   Preamble += "#ifdef CF_EXPORT_CONSTANT_STRING\n";
   Preamble += "extern \"C\" __declspec(dllexport) int __CFConstantStringClassReference[];\n";
@@ -7220,9 +7209,7 @@ void RewriteModernObjC::RewriteObjCClassMetaData(ObjCImplementationDecl *IDecl,
   
   // If any of our property implementations have associated getters or
   // setters, produce metadata for them as well.
-  for (ObjCImplDecl::propimpl_iterator Prop = IDecl->propimpl_begin(),
-       PropEnd = IDecl->propimpl_end();
-       Prop != PropEnd; ++Prop) {
+  for (const auto *Prop : IDecl->property_impls()) {
     if (Prop->getPropertyImplementation() == ObjCPropertyImplDecl::Dynamic)
       continue;
     if (!Prop->getPropertyIvarDecl())
@@ -7475,9 +7462,7 @@ void RewriteModernObjC::RewriteObjCCategoryImplDecl(ObjCCategoryImplDecl *IDecl,
   
   // If any of our property implementations have associated getters or
   // setters, produce metadata for them as well.
-  for (ObjCImplDecl::propimpl_iterator Prop = IDecl->propimpl_begin(),
-       PropEnd = IDecl->propimpl_end();
-       Prop != PropEnd; ++Prop) {
+  for (const auto *Prop : IDecl->property_impls()) {
     if (Prop->getPropertyImplementation() == ObjCPropertyImplDecl::Dynamic)
       continue;
     if (!Prop->getPropertyIvarDecl())
@@ -7505,16 +7490,11 @@ void RewriteModernObjC::RewriteObjCCategoryImplDecl(ObjCCategoryImplDecl *IDecl,
   
   // Protocols referenced in class declaration?
   // Protocol's super protocol list
-  std::vector<ObjCProtocolDecl *> RefedProtocols;
-  for (ObjCCategoryDecl::protocol_iterator I = CDecl->protocol_begin(),
-                                           E = CDecl->protocol_end();
-
-         I != E; ++I) {
-    RefedProtocols.push_back(*I);
+  SmallVector<ObjCProtocolDecl *, 8> RefedProtocols(CDecl->protocols());
+  for (auto *I : CDecl->protocols())
     // Must write out all protocol definitions in current qualifier list,
     // and in their nested qualifiers before writing out current definition.
-    RewriteObjCProtocolMetaData(*I, Result);
-  }
+    RewriteObjCProtocolMetaData(I, Result);
   
   Write_protocol_list_initializer(Context, Result, 
                                   RefedProtocols,

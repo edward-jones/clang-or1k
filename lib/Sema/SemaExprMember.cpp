@@ -292,7 +292,7 @@ CheckExtVectorComponent(Sema &S, QualType baseType, ExprValueKind &VK,
 
   // This flag determines whether or not CompName has an 's' char prefix,
   // indicating that it is a string of hex values to be used as vector indices.
-  bool HexSwizzle = *compStr == 's' || *compStr == 'S';
+  bool HexSwizzle = (*compStr == 's' || *compStr == 'S') && compStr[1];
 
   bool HasRepeated = false;
   bool HasIndex[16] = {};
@@ -398,25 +398,22 @@ static Decl *FindGetterSetterNameDecl(const ObjCObjectPointerType *QIdTy,
                                       ASTContext &Context) {
   // Check protocols on qualified interfaces.
   Decl *GDecl = 0;
-  for (ObjCObjectPointerType::qual_iterator I = QIdTy->qual_begin(),
-       E = QIdTy->qual_end(); I != E; ++I) {
+  for (const auto *I : QIdTy->quals()) {
     if (Member)
-      if (ObjCPropertyDecl *PD = (*I)->FindPropertyDeclaration(Member)) {
+      if (ObjCPropertyDecl *PD = I->FindPropertyDeclaration(Member)) {
         GDecl = PD;
         break;
       }
     // Also must look for a getter or setter name which uses property syntax.
-    if (ObjCMethodDecl *OMD = (*I)->getInstanceMethod(Sel)) {
+    if (ObjCMethodDecl *OMD = I->getInstanceMethod(Sel)) {
       GDecl = OMD;
       break;
     }
   }
   if (!GDecl) {
-    for (ObjCObjectPointerType::qual_iterator I = QIdTy->qual_begin(),
-         E = QIdTy->qual_end(); I != E; ++I) {
+    for (const auto *I : QIdTy->quals()) {
       // Search in the protocol-qualifier list of current protocol.
-      GDecl = FindGetterSetterNameDeclFromProtocolList(*I, Member, Sel, 
-                                                       Context);
+      GDecl = FindGetterSetterNameDeclFromProtocolList(I, Member, Sel, Context);
       if (GDecl)
         return GDecl;
     }
@@ -808,8 +805,6 @@ Sema::BuildAnonymousStructUnionMemberReference(const CXXScopeSpec &SS,
     if (!result)
       return ExprError();
 
-    baseObjectIsPointer = false;
-    
     // FIXME: check qualified member access
   }
   

@@ -227,11 +227,9 @@ ObjCContainerDecl::FindPropertyDeclaration(IdentifierInfo *PropertyId) const {
       const ObjCCategoryDecl *OCD = cast<ObjCCategoryDecl>(this);
       // Look through protocols.
       if (!OCD->IsClassExtension())
-        for (ObjCCategoryDecl::protocol_iterator
-              I = OCD->protocol_begin(), E = OCD->protocol_end(); I != E; ++I)
-        if (ObjCPropertyDecl *P = (*I)->FindPropertyDeclaration(PropertyId))
-          return P;
-
+        for (const auto *I : OCD->protocols())
+          if (ObjCPropertyDecl *P = I->FindPropertyDeclaration(PropertyId))
+            return P;
       break;
     }
   }
@@ -355,6 +353,20 @@ ObjCInterfaceDecl::findInterfaceWithDesignatedInitializers() const {
   return 0;
 }
 
+static bool isIntroducingInitializers(const ObjCInterfaceDecl *D) {
+  for (const auto *MD : D->instance_methods()) {
+    if (MD->getMethodFamily() == OMF_init && !MD->isOverriding())
+      return true;
+  }
+  for (const auto *Ext : D->visible_extensions()) {
+    for (const auto *MD : Ext->instance_methods()) {
+      if (MD->getMethodFamily() == OMF_init && !MD->isOverriding())
+        return true;
+    }
+  }
+  return false;
+}
+
 bool ObjCInterfaceDecl::inheritsDesignatedInitializers() const {
   switch (data().InheritedDesignatedInitializers) {
   case DefinitionData::IDI_Inherited:
@@ -362,17 +374,10 @@ bool ObjCInterfaceDecl::inheritsDesignatedInitializers() const {
   case DefinitionData::IDI_NotInherited:
     return false;
   case DefinitionData::IDI_Unknown: {
-    bool isIntroducingInitializers = false;
-    for (const auto *MD : instance_methods()) {
-      if (MD->getMethodFamily() == OMF_init && !MD->isOverriding()) {
-        isIntroducingInitializers = true;
-        break;
-      }
-    }
     // If the class introduced initializers we conservatively assume that we
     // don't know if any of them is a designated initializer to avoid possible
     // misleading warnings.
-    if (isIntroducingInitializers) {
+    if (isIntroducingInitializers(this)) {
       data().InheritedDesignatedInitializers = DefinitionData::IDI_NotInherited;
       return false;
     } else {
@@ -400,6 +405,11 @@ void ObjCInterfaceDecl::getDesignatedInitializers(
   for (const auto *MD : IFace->instance_methods())
     if (MD->isThisDeclarationADesignatedInitializer())
       Methods.push_back(MD);
+  for (const auto *Ext : IFace->visible_extensions()) {
+    for (const auto *MD : Ext->instance_methods())
+      if (MD->isThisDeclarationADesignatedInitializer())
+        Methods.push_back(MD);
+  }
 }
 
 bool ObjCInterfaceDecl::isDesignatedInitializer(Selector Sel,
@@ -414,11 +424,20 @@ bool ObjCInterfaceDecl::isDesignatedInitializer(Selector Sel,
   if (!IFace)
     return false;
 
-  if (const ObjCMethodDecl *MD = IFace->getMethod(Sel, /*isInstance=*/true)) {
+  if (const ObjCMethodDecl *MD = IFace->getInstanceMethod(Sel)) {
     if (MD->isThisDeclarationADesignatedInitializer()) {
       if (InitMethod)
         *InitMethod = MD;
       return true;
+    }
+  }
+  for (const auto *Ext : IFace->visible_extensions()) {
+    if (const ObjCMethodDecl *MD = Ext->getInstanceMethod(Sel)) {
+      if (MD->isThisDeclarationADesignatedInitializer()) {
+        if (InitMethod)
+          *InitMethod = MD;
+        return true;
+      }
     }
   }
   return false;
@@ -943,10 +962,8 @@ static void CollectOverriddenMethodsRecurse(const ObjCContainerDecl *Container,
           return;
         }
 
-    for (ObjCCategoryDecl::protocol_iterator P = Category->protocol_begin(),
-                                          PEnd = Category->protocol_end();
-         P != PEnd; ++P)
-      CollectOverriddenMethodsRecurse(*P, Method, Methods, MovedToSuper);
+    for (const auto *P : Category->protocols())
+      CollectOverriddenMethodsRecurse(P, Method, Methods, MovedToSuper);
     return;
   }
 
@@ -1243,19 +1260,17 @@ ObjCIvarDecl *ObjCInterfaceDecl::all_declared_ivar_begin() {
     data().IvarListMissingImplementation = false;
     if (!ImplDecl->ivar_empty()) {
       SmallVector<SynthesizeIvarChunk, 16> layout;
-      for (ObjCImplementationDecl::ivar_iterator I = ImplDecl->ivar_begin(),
-           E = ImplDecl->ivar_end(); I != E; ++I) {
-        ObjCIvarDecl *IV = *I;
+      for (auto *IV : ImplDecl->ivars()) {
         if (IV->getSynthesize() && !IV->isInvalidDecl()) {
           layout.push_back(SynthesizeIvarChunk(
                              IV->getASTContext().getTypeSize(IV->getType()), IV));
           continue;
         }
         if (!data().IvarList)
-          data().IvarList = *I;
+          data().IvarList = IV;
         else
-          curIvar->setNextIvar(*I);
-        curIvar = *I;
+          curIvar->setNextIvar(IV);
+        curIvar = IV;
       }
       
       if (!layout.empty()) {
@@ -1343,10 +1358,8 @@ bool ObjCInterfaceDecl::ClassImplementsProtocol(ObjCProtocolDecl *lProto,
   // 2nd, look up the category.
   if (lookupCategory)
     for (const auto *Cat : visible_categories()) {
-      for (ObjCCategoryDecl::protocol_iterator PI = Cat->protocol_begin(),
-                                               E = Cat->protocol_end();
-           PI != E; ++PI)
-        if (getASTContext().ProtocolCompatibleWithProtocol(lProto, *PI))
+      for (auto *PI : Cat->protocols())
+        if (getASTContext().ProtocolCompatibleWithProtocol(lProto, PI))
           return true;
     }
 
@@ -1680,12 +1693,10 @@ void ObjCImplDecl::setClassInterface(ObjCInterfaceDecl *IFace) {
 ///
 ObjCPropertyImplDecl *ObjCImplDecl::
 FindPropertyImplIvarDecl(IdentifierInfo *ivarId) const {
-  for (propimpl_iterator i = propimpl_begin(), e = propimpl_end(); i != e; ++i){
-    ObjCPropertyImplDecl *PID = *i;
+  for (auto *PID : property_impls())
     if (PID->getPropertyIvarDecl() &&
         PID->getPropertyIvarDecl()->getIdentifier() == ivarId)
       return PID;
-  }
   return 0;
 }
 
@@ -1695,11 +1706,9 @@ FindPropertyImplIvarDecl(IdentifierInfo *ivarId) const {
 ///
 ObjCPropertyImplDecl *ObjCImplDecl::
 FindPropertyImplDecl(IdentifierInfo *Id) const {
-  for (propimpl_iterator i = propimpl_begin(), e = propimpl_end(); i != e; ++i){
-    ObjCPropertyImplDecl *PID = *i;
+  for (auto *PID : property_impls())
     if (PID->getPropertyDecl()->getIdentifier() == Id)
       return PID;
-  }
   return 0;
 }
 

@@ -212,11 +212,9 @@ Sema::ImplicitExceptionSpecification::CalledDecl(SourceLocation CallLoc,
          "Shouldn't collect exceptions when throw-all is guaranteed.");
   ComputedEST = EST_Dynamic;
   // Record the exceptions in this function's exception specification.
-  for (FunctionProtoType::exception_iterator E = Proto->exception_begin(),
-                                          EEnd = Proto->exception_end();
-       E != EEnd; ++E)
-    if (ExceptionsSeen.insert(Self->Context.getCanonicalType(*E)))
-      Exceptions.push_back(*E);
+  for (const auto &E : Proto->exceptions())
+    if (ExceptionsSeen.insert(Self->Context.getCanonicalType(E)))
+      Exceptions.push_back(E);
 }
 
 void Sema::ImplicitExceptionSpecification::CalledExpr(Expr *E) {
@@ -586,6 +584,7 @@ bool Sema::MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old,
     }
   }
 
+  const FunctionDecl *Def;
   // C++11 [dcl.constexpr]p1: If any declaration of a function or function
   // template has a constexpr specifier then all its declarations shall
   // contain the constexpr specifier.
@@ -593,6 +592,13 @@ bool Sema::MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old,
     Diag(New->getLocation(), diag::err_constexpr_redecl_mismatch)
       << New << New->isConstexpr();
     Diag(Old->getLocation(), diag::note_previous_declaration);
+    Invalid = true;
+  } else if (!Old->isInlined() && New->isInlined() && Old->isDefined(Def)) {
+    // C++11 [dcl.fcn.spec]p4:
+    //   If the definition of a function appears in a translation unit before its
+    //   first declaration as inline, the program is ill-formed.
+    Diag(New->getLocation(), diag::err_inline_decl_follows_def) << New;
+    Diag(Def->getLocation(), diag::note_previous_definition);
     Invalid = true;
   }
 
@@ -813,9 +819,8 @@ static bool CheckConstexprDeclStmt(Sema &SemaRef, const FunctionDecl *Dcl,
   // C++11 [dcl.constexpr]p3 and p4:
   //  The definition of a constexpr function(p3) or constructor(p4) [...] shall
   //  contain only
-  for (DeclStmt::decl_iterator DclIt = DS->decl_begin(),
-         DclEnd = DS->decl_end(); DclIt != DclEnd; ++DclIt) {
-    switch ((*DclIt)->getKind()) {
+  for (const auto *DclIt : DS->decls()) {
+    switch (DclIt->getKind()) {
     case Decl::StaticAssert:
     case Decl::Using:
     case Decl::UsingShadow:
@@ -831,7 +836,7 @@ static bool CheckConstexprDeclStmt(Sema &SemaRef, const FunctionDecl *Dcl,
     case Decl::TypeAlias: {
       //   - typedef declarations and alias-declarations that do not define
       //     classes or enumerations,
-      TypedefNameDecl *TN = cast<TypedefNameDecl>(*DclIt);
+      const auto *TN = cast<TypedefNameDecl>(DclIt);
       if (TN->getUnderlyingType()->isVariablyModifiedType()) {
         // Don't allow variably-modified types in constexpr functions.
         TypeLoc TL = TN->getTypeSourceInfo()->getTypeLoc();
@@ -846,7 +851,7 @@ static bool CheckConstexprDeclStmt(Sema &SemaRef, const FunctionDecl *Dcl,
     case Decl::Enum:
     case Decl::CXXRecord:
       // C++1y allows types to be defined, not just declared.
-      if (cast<TagDecl>(*DclIt)->isThisDeclarationADefinition())
+      if (cast<TagDecl>(DclIt)->isThisDeclarationADefinition())
         SemaRef.Diag(DS->getLocStart(),
                      SemaRef.getLangOpts().CPlusPlus1y
                        ? diag::warn_cxx11_compat_constexpr_type_definition
@@ -865,7 +870,7 @@ static bool CheckConstexprDeclStmt(Sema &SemaRef, const FunctionDecl *Dcl,
       // C++1y [dcl.constexpr]p3 allows anything except:
       //   a definition of a variable of non-literal type or of static or
       //   thread storage duration or for which no initialization is performed.
-      VarDecl *VD = cast<VarDecl>(*DclIt);
+      const auto *VD = cast<VarDecl>(DclIt);
       if (VD->isThisDeclarationADefinition()) {
         if (VD->isStaticLocal()) {
           SemaRef.Diag(VD->getLocation(),
@@ -998,9 +1003,8 @@ CheckConstexprFunctionStmt(Sema &SemaRef, const FunctionDecl *Dcl, Stmt *S,
       Cxx1yLoc = S->getLocStart();
 
     CompoundStmt *CompStmt = cast<CompoundStmt>(S);
-    for (CompoundStmt::body_iterator BodyIt = CompStmt->body_begin(),
-           BodyEnd = CompStmt->body_end(); BodyIt != BodyEnd; ++BodyIt) {
-      if (!CheckConstexprFunctionStmt(SemaRef, Dcl, *BodyIt, ReturnStmts,
+    for (auto *BodyIt : CompStmt->body()) {
+      if (!CheckConstexprFunctionStmt(SemaRef, Dcl, BodyIt, ReturnStmts,
                                       Cxx1yLoc))
         return false;
     }
@@ -1102,9 +1106,8 @@ bool Sema::CheckConstexprFunctionBody(const FunctionDecl *Dcl, Stmt *Body) {
   //   [... list of cases ...]
   CompoundStmt *CompBody = cast<CompoundStmt>(Body);
   SourceLocation Cxx1yLoc;
-  for (CompoundStmt::body_iterator BodyIt = CompBody->body_begin(),
-         BodyEnd = CompBody->body_end(); BodyIt != BodyEnd; ++BodyIt) {
-    if (!CheckConstexprFunctionStmt(*this, Dcl, *BodyIt, ReturnStmts, Cxx1yLoc))
+  for (auto *BodyIt : CompBody->body()) {
+    if (!CheckConstexprFunctionStmt(*this, Dcl, BodyIt, ReturnStmts, Cxx1yLoc))
       return false;
   }
 
@@ -4664,15 +4667,6 @@ computeImplicitExceptionSpec(Sema &S, SourceLocation Loc, CXXMethodDecl *MD) {
   return S.ComputeInheritingCtorExceptionSpec(cast<CXXConstructorDecl>(MD));
 }
 
-static void
-updateExceptionSpec(Sema &S, FunctionDecl *FD, const FunctionProtoType *FPT,
-                    const Sema::ImplicitExceptionSpecification &ExceptSpec) {
-  FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
-  ExceptSpec.getEPI(EPI);
-  FD->setType(S.Context.getFunctionType(FPT->getReturnType(),
-                                        FPT->getParamTypes(), EPI));
-}
-
 static FunctionProtoType::ExtProtoInfo getImplicitMethodEPI(Sema &S,
                                                             CXXMethodDecl *MD) {
   FunctionProtoType::ExtProtoInfo EPI;
@@ -4697,8 +4691,11 @@ void Sema::EvaluateImplicitExceptionSpec(SourceLocation Loc, CXXMethodDecl *MD) 
   ImplicitExceptionSpecification ExceptSpec =
       computeImplicitExceptionSpec(*this, Loc, MD);
 
+  FunctionProtoType::ExtProtoInfo EPI;
+  ExceptSpec.getEPI(EPI);
+
   // Update the type of the special member to use it.
-  updateExceptionSpec(*this, MD, FPT, ExceptSpec);
+  UpdateExceptionSpec(MD, EPI);
 
   // A user-provided destructor can be defined outside the class. When that
   // happens, be sure to update the exception specification on both
@@ -4706,8 +4703,7 @@ void Sema::EvaluateImplicitExceptionSpec(SourceLocation Loc, CXXMethodDecl *MD) 
   const FunctionProtoType *CanonicalFPT =
     MD->getCanonicalDecl()->getType()->castAs<FunctionProtoType>();
   if (CanonicalFPT->getExceptionSpecType() == EST_Unevaluated)
-    updateExceptionSpec(*this, MD->getCanonicalDecl(),
-                        CanonicalFPT, ExceptSpec);
+    UpdateExceptionSpec(MD->getCanonicalDecl(), EPI);
 }
 
 void Sema::CheckExplicitlyDefaultedSpecialMember(CXXMethodDecl *MD) {
@@ -7397,7 +7393,7 @@ NamedDecl *Sema::BuildUsingDeclaration(Scope *S, AccessSpecifier AS,
     return 0;
 
   // Check for bad qualifiers.
-  if (CheckUsingDeclQualifier(UsingLoc, SS, IdentLoc))
+  if (CheckUsingDeclQualifier(UsingLoc, SS, NameInfo, IdentLoc))
     return 0;
 
   DeclContext *LookupContext = computeDeclContext(SS);
@@ -7623,6 +7619,7 @@ bool Sema::CheckUsingDeclRedeclaration(SourceLocation UsingLoc,
 /// scope.  If an error is found, diagnoses it and returns true.
 bool Sema::CheckUsingDeclQualifier(SourceLocation UsingLoc,
                                    const CXXScopeSpec &SS,
+                                   const DeclarationNameInfo &NameInfo,
                                    SourceLocation NameLoc) {
   DeclContext *NamedContext = computeDeclContext(SS);
 
@@ -7634,8 +7631,56 @@ bool Sema::CheckUsingDeclQualifier(SourceLocation UsingLoc,
     // If we weren't able to compute a valid scope, it must be a
     // dependent class scope.
     if (!NamedContext || NamedContext->isRecord()) {
+      auto *RD = dyn_cast<CXXRecordDecl>(NamedContext);
+      if (RD && RequireCompleteDeclContext(const_cast<CXXScopeSpec&>(SS), RD))
+        RD = 0;
+
       Diag(NameLoc, diag::err_using_decl_can_not_refer_to_class_member)
         << SS.getRange();
+
+      // If we have a complete, non-dependent source type, try to suggest a
+      // way to get the same effect.
+      if (!RD)
+        return true;
+
+      // Find what this using-declaration was referring to.
+      LookupResult R(*this, NameInfo, LookupOrdinaryName);
+      R.setHideTags(false);
+      R.suppressDiagnostics();
+      LookupQualifiedName(R, RD);
+
+      if (R.getAsSingle<TypeDecl>()) {
+        if (getLangOpts().CPlusPlus11) {
+          // Convert 'using X::Y;' to 'using Y = X::Y;'.
+          Diag(SS.getBeginLoc(), diag::note_using_decl_class_member_workaround)
+            << 0 // alias declaration
+            << FixItHint::CreateInsertion(SS.getBeginLoc(),
+                                          NameInfo.getName().getAsString() +
+                                              " = ");
+        } else {
+          // Convert 'using X::Y;' to 'typedef X::Y Y;'.
+          SourceLocation InsertLoc =
+              PP.getLocForEndOfToken(NameInfo.getLocEnd());
+          Diag(InsertLoc, diag::note_using_decl_class_member_workaround)
+            << 1 // typedef declaration
+            << FixItHint::CreateReplacement(UsingLoc, "typedef")
+            << FixItHint::CreateInsertion(
+                   InsertLoc, " " + NameInfo.getName().getAsString());
+        }
+      } else if (R.getAsSingle<VarDecl>()) {
+        // Don't provide a fixit outside C++11 mode; we don't want to suggest
+        // repeating the type of the static data member here.
+        FixItHint FixIt;
+        if (getLangOpts().CPlusPlus11) {
+          // Convert 'using X::Y;' to 'auto &Y = X::Y;'.
+          FixIt = FixItHint::CreateReplacement(
+              UsingLoc, "auto &" + NameInfo.getName().getAsString() + " = ");
+        }
+
+        Diag(UsingLoc, diag::note_using_decl_class_member_workaround)
+          << 2 // reference declaration
+          << FixIt;
+      }
       return true;
     }
 
@@ -10475,6 +10520,7 @@ void Sema::FinalizeVarWithDestructor(VarDecl *VD, const RecordType *Record) {
                         << VD->getType());
   DiagnoseUseOfDecl(Destructor, VD->getLocation());
 
+  if (Destructor->isTrivial()) return;
   if (!VD->hasGlobalStorage()) return;
 
   // Emit warning for non-trivial dtor in global scope (a real global,
@@ -12576,10 +12622,8 @@ bool Sema::checkThisInStaticMemberFunctionExceptionSpec(CXXMethodDecl *Method) {
       return true;
     
   case EST_Dynamic:
-    for (FunctionProtoType::exception_iterator E = Proto->exception_begin(),
-         EEnd = Proto->exception_end();
-         E != EEnd; ++E) {
-      if (!Finder.TraverseType(*E))
+    for (const auto &E : Proto->exceptions()) {
+      if (!Finder.TraverseType(E))
         return true;
     }
     break;
@@ -12604,19 +12648,13 @@ bool Sema::checkThisInStaticMemberFunctionAttributes(CXXMethodDecl *Method) {
       Args = ArrayRef<Expr *>(AA->args_begin(), AA->args_size());
     else if (const auto *AB = dyn_cast<AcquiredBeforeAttr>(A))
       Args = ArrayRef<Expr *>(AB->args_begin(), AB->args_size());
-    else if (const auto *ELF  = dyn_cast<ExclusiveLockFunctionAttr>(A))
-      Args = ArrayRef<Expr *>(ELF->args_begin(), ELF->args_size());
-    else if (const auto *SLF  = dyn_cast<SharedLockFunctionAttr>(A))
-      Args = ArrayRef<Expr *>(SLF->args_begin(), SLF->args_size());
     else if (const auto *ETLF = dyn_cast<ExclusiveTrylockFunctionAttr>(A)) {
       Arg = ETLF->getSuccessValue();
       Args = ArrayRef<Expr *>(ETLF->args_begin(), ETLF->args_size());
     } else if (const auto *STLF = dyn_cast<SharedTrylockFunctionAttr>(A)) {
       Arg = STLF->getSuccessValue();
       Args = ArrayRef<Expr *>(STLF->args_begin(), STLF->args_size());
-    } else if (const auto *UF = dyn_cast<UnlockFunctionAttr>(A))
-      Args = ArrayRef<Expr *>(UF->args_begin(), UF->args_size());
-    else if (const auto *LR = dyn_cast<LockReturnedAttr>(A))
+    } else if (const auto *LR = dyn_cast<LockReturnedAttr>(A))
       Arg = LR->getArg();
     else if (const auto *LE = dyn_cast<LocksExcludedAttr>(A))
       Args = ArrayRef<Expr *>(LE->args_begin(), LE->args_size());
