@@ -1586,7 +1586,7 @@ public:
     DoubleAlign = 32;
     LongDoubleAlign = 32;
     SuitableAlign = 32;
-    DescriptionString = "E-p:32:32-i64:32-f64:32-v64:32-v128:32-a:0:32-n32";
+    DescriptionString = "E-m:e-p:32:32-i64:32-f64:32-v64:32-v128:32-a:0:32-n32";
     UserLabelPrefix = "";
   }
 
