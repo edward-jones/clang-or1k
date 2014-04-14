@@ -1578,7 +1578,6 @@ namespace {
 // OR1K abstract base class
 class OR1KTargetInfo : public TargetInfo {
   static const char * const GCCRegNames[];
-  static const TargetInfo::GCCRegAlias GCCRegAliases[];
   
   enum CPUKind {
     CK_NONE,
