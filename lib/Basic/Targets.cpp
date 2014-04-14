@@ -1579,6 +1579,12 @@ namespace {
 class OR1KTargetInfo : public TargetInfo {
   static const char * const GCCRegNames[];
   static const TargetInfo::GCCRegAlias GCCRegAliases[];
+  
+  enum CPUKind {
+    CK_NONE,
+    CK_GENERIC,
+    CK_OR1200,
+  } CPU;
 
 public:
   OR1KTargetInfo(const llvm::Triple &triple) : TargetInfo(triple) {
@@ -1640,6 +1646,19 @@ public:
   }
   const char *getClobbers() const override {
     return "";
+  }
+
+  bool setCPU(const std::string &Name) override {
+    CPU = llvm::StringSwitch<CPUKind>(Name)
+      .Case("generic" , CK_GENERIC)
+      .Case("or1200",   CK_OR1200)
+      .Default(CK_NONE);
+    
+    if (CPU == CK_NONE) {
+      return false;
+    }
+
+    return true;
   }
 };
 
