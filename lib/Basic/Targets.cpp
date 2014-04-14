@@ -1590,23 +1590,22 @@ public:
     UserLabelPrefix = "";
   }
 
-  virtual void getTargetBuiltins(const Builtin::Info *&Records,
-                                 unsigned &NumRecords) const {
+  void getTargetBuiltins(const Builtin::Info *&Records,
+                                 unsigned &NumRecords) const override {
     // FIXME: Implement.
     Records = 0;
     NumRecords = 0;
   }
 
-  virtual void getTargetDefines(const LangOptions &Opts,
-                                MacroBuilder &Builder) const;
+  void getTargetDefines(const LangOptions &Opts,
+                                MacroBuilder &Builder) const override;
 
-  virtual bool hasFeature(StringRef Feature) const {
+  bool hasFeature(StringRef Feature) const override {
     return Feature == "or1k";
   }
 
-  virtual void setFeatureEnabled(llvm::StringMap<bool> &Features,
-                                 StringRef Name,
-                                 bool Enabled) const {
+  void setFeatureEnabled(llvm::StringMap<bool> &Features,
+                                 StringRef Name, bool Enabled) const override {
     if (Name == "mul" ||
         Name == "div" ||
         Name == "ror" ||
@@ -1619,16 +1618,16 @@ public:
     }
   }
 
-  virtual BuiltinVaListKind getBuiltinVaListKind() const {
+  BuiltinVaListKind getBuiltinVaListKind() const override {
     return TargetInfo::VoidPtrBuiltinVaList;
   }
 
-  virtual void getGCCRegNames(const char * const *&Names,
-                              unsigned &NumNames) const;
-  virtual void getGCCRegAliases(const GCCRegAlias *&Aliases,
-                                unsigned &NumAliases) const;
-  virtual bool validateAsmConstraint(const char *&Name,
-                                     TargetInfo::ConstraintInfo &Info) const {
+  void getGCCRegNames(const char * const *&Names,
+                              unsigned &NumNames) const override;
+  void getGCCRegAliases(const GCCRegAlias *&Aliases,
+                                unsigned &NumAliases) const override;
+  bool validateAsmConstraint(const char *&Name,
+                             TargetInfo::ConstraintInfo &Info) const override {
     switch (*Name) {
     default: return false;
     case 'O': // Zero
@@ -1639,7 +1638,7 @@ public:
       return true;
     }
   }
-  virtual const char *getClobbers() const {
+  const char *getClobbers() const override {
     return "";
   }
 };
