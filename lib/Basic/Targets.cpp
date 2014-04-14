@@ -1651,10 +1651,6 @@ void OR1KTargetInfo::getTargetDefines(const LangOptions &Opts,
   Builder.defineMacro("__or1k__");
   Builder.defineMacro("__OR1K__");
 
-  // Target properties.
-  Builder.defineMacro("_BIG_ENDIAN_");
-  Builder.defineMacro("__BIG_ENDIAN__");
-
   // Subtarget options.
   Builder.defineMacro("__REGISTER_PREFIX__", "");
 }
