@@ -1219,6 +1219,12 @@ static std::string getR600TargetGPU(const ArgList &Args) {
   return "";
 }
 
+static std::string getOR1KTargetCPU(const ArgList &Args) {
+  if (Arg *A = Args.getLastArg(options::OPT_mcpu_EQ))
+    return A->getValue();
+  return "generic";
+}
+
 static void getSparcTargetFeatures(const ArgList &Args,
                                    std::vector<const char *> Features) {
   bool SoftFloatABI = true;
@@ -1512,6 +1518,9 @@ static std::string getCPUName(const ArgList &Args, const llvm::Triple &T) {
 
   case llvm::Triple::r600:
     return getR600TargetGPU(Args);
+    
+  case llvm::Triple::or1k:
+    return getOR1KTargetCPU(Args);
   }
 }
 
