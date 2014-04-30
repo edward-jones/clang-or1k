@@ -1260,6 +1260,11 @@ void Clang::AddOR1KTargetArgs(const ArgList &Args,
     }
   }
 
+  if (Arg *A = Args.getLastArg(options::OPT_mabi_EQ)) {
+    CmdArgs.push_back("-target-abi");
+    CmdArgs.push_back(A->getValue());
+  }
+
   if (FloatABI.empty()) {
     FloatABI = "soft";
   }

@@ -169,7 +169,10 @@ public:
     //     void *__overflow_arg_area;
     //     void *__reg_save_area;
     //   } va_list[1];
-    SystemZBuiltinVaList
+    SystemZBuiltinVaList,
+
+    // __builtin_va_list as defined by the OR1K NewABI.
+    OR1KNewABIBuiltinVaList
   };
 
 protected:

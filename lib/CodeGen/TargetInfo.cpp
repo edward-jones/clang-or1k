@@ -5185,30 +5185,39 @@ namespace {
 
 class OR1KABIInfo : public ABIInfo {
 public:
-  OR1KABIInfo(CodeGenTypes &CGT) : ABIInfo(CGT) {}
+  enum ABIKind {
+    DefaultABI,
+    NewABI
+  };
+
+public:
+  OR1KABIInfo(CodeGenTypes &CGT, ABIKind ABI) : ABIInfo(CGT), ABI(ABI) {}
 
   bool isPromotableIntegerType(QualType Ty) const;
 
   ABIArgInfo classifyReturnType(QualType RetTy) const;
   ABIArgInfo classifyArgumentType(QualType Ty) const;
 
-  virtual void computeInfo(CGFunctionInfo &FI) const {
+  void computeInfo(CGFunctionInfo &FI) const override {
     FI.getReturnInfo() = classifyReturnType(FI.getReturnType());
-    for (CGFunctionInfo::arg_iterator it = FI.arg_begin(), ie = FI.arg_end();
-         it != ie; ++it)
-      it->info = classifyArgumentType(it->type);
+    for (auto &A : FI.arguments())
+      A.info = classifyArgumentType(A.type);
   }
 
-  virtual llvm::Value *EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
-                                 CodeGenFunction &CGF) const;
+  llvm::Value *EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
+                         CodeGenFunction &CGF) const override;
+
+public:
+  static ABIKind parseABI(const char *Name);
+
+private:
+  ABIKind ABI;
 };
 
 class OR1KTargetCodeGenInfo : public TargetCodeGenInfo {
 public:
-  OR1KTargetCodeGenInfo(CodeGenTypes &CGT)
-    : TargetCodeGenInfo(new OR1KABIInfo(CGT)) {}
-  void SetTargetAttributes(const Decl *D, llvm::GlobalValue *GV,
-                           CodeGen::CodeGenModule &M) const;
+  OR1KTargetCodeGenInfo(CodeGenTypes &CGT, OR1KABIInfo::ABIKind ABI)
+   : TargetCodeGenInfo(new OR1KABIInfo(CGT, ABI)) {}
 };
 
 }
@@ -5233,8 +5242,99 @@ bool OR1KABIInfo::isPromotableIntegerType(QualType Ty) const {
 
 llvm::Value *OR1KABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
                                     CodeGenFunction &CGF) const {
-  // FIXME: Implement
-  return 0;
+  if (ABI == DefaultABI)
+    // Emit va_arg IR instruction.
+    return 0;
+
+  assert(ABI == NewABI);
+
+  // Assume that va_list type is correct; should be pointer to LLVM type:
+  // struct {
+  //   i32 gpr;
+  //   i8 *stack_area;
+  //   i8 *reg_save_area;
+  // };
+
+  // Canonicalize the argument with respect to ABI.
+  Ty = CGF.getContext().getCanonicalType(Ty);
+  ABIArgInfo AI = classifyArgumentType(Ty);
+
+  llvm::Type *APTy = llvm::PointerType::getUnqual(CGF.ConvertTypeForMem(Ty));
+
+  if (AI.isIndirect())
+    APTy = llvm::PointerType::getUnqual(APTy);
+
+  llvm::Type *PointeeTy = APTy->getPointerElementType();
+  unsigned Size = CGF.getTypes().getDataLayout().getTypeStoreSize(PointeeTy);
+  Size = std::max(4U, Size);
+
+  llvm::Value *GprPtr = CGF.Builder.CreateStructGEP(VAListAddr, 0, "gpr_ptr");
+  llvm::Value *Gpr = CGF.Builder.CreateLoad(GprPtr, "gpr");
+  llvm::Value *MaxGpr = llvm::ConstantInt::get(Gpr->getType(), 24 - Size);
+  llvm::Value *InRegs = CGF.Builder.CreateICmpULE(Gpr, MaxGpr, "fits_in_regs");
+
+  llvm::BasicBlock *InRegBlock = CGF.createBasicBlock("vaarg.in_reg");
+  llvm::BasicBlock *InMemBlock = CGF.createBasicBlock("vaarg.in_mem");
+  llvm::BasicBlock *ContBlock = CGF.createBasicBlock("vaarg.end");
+  CGF.Builder.CreateCondBr(InRegs, InRegBlock, InMemBlock);
+
+  // Emit code to load the value if it was passed in registers.
+  CGF.EmitBlock(InRegBlock);
+
+  // Work out the address of an argument register.
+  llvm::Value *RegSaveAreaPtr =
+    CGF.Builder.CreateStructGEP(VAListAddr, 2, "reg_save_area_ptr");
+  llvm::Value *RegSaveArea =
+    CGF.Builder.CreateLoad(RegSaveAreaPtr, "reg_save_area");
+  llvm::Value *RegAddr =
+    CGF.Builder.CreateBitCast(RegSaveArea, APTy, "reg_addr");
+
+  // Update the register count
+  llvm::Value *RegSaveAreaOffset = llvm::ConstantInt::get(CGF.Int32Ty, Size);
+  llvm::Value *NextRegSaveArea =
+    CGF.Builder.CreateGEP(RegSaveArea, RegSaveAreaOffset,
+                          "reg_save_area_ptr.next");
+  llvm::Value *NextGprReg = CGF.Builder.CreateAdd(Gpr, RegSaveAreaOffset);
+  CGF.Builder.CreateStore(NextRegSaveArea, RegSaveAreaPtr);
+  CGF.EmitBranch(ContBlock);
+
+  // Emit code to load the value if it was passed in memory.
+  CGF.EmitBlock(InMemBlock);
+
+  // Work out the address of a stack argument.
+  llvm::Value *StackAreaPtr =
+    CGF.Builder.CreateStructGEP(VAListAddr, 1, "stack_area_ptr");
+  llvm::Value *StackArea = CGF.Builder.CreateLoad(StackAreaPtr, "stack_area");
+  llvm::Value *MemAddr = CGF.Builder.CreateBitCast(StackArea, APTy, "mem_addr");
+
+  // Update overflow_arg_area_ptr pointer
+  llvm::Value *StackAreaOffset = llvm::ConstantInt::get(CGF.Int32Ty, Size);
+  llvm::Value *NextStackArea =
+    CGF.Builder.CreateGEP(StackArea, StackAreaOffset, "stack_area.next");
+  CGF.Builder.CreateStore(NextStackArea, StackAreaPtr);
+  CGF.EmitBranch(ContBlock);
+
+  // Return the appropriate result.
+  CGF.EmitBlock(ContBlock);
+  llvm::PHINode *ResAddr = CGF.Builder.CreatePHI(APTy, 2, "va_arg.addr");
+  llvm::PHINode *NextGpr = CGF.Builder.CreatePHI(Gpr->getType(), 2, "gpr.next");
+  ResAddr->addIncoming(RegAddr, InRegBlock);
+  ResAddr->addIncoming(MemAddr, InMemBlock);
+  NextGpr->addIncoming(NextGprReg, InRegBlock);
+  NextGpr->addIncoming(llvm::ConstantInt::get(Gpr->getType(), 24), InMemBlock);
+  CGF.Builder.CreateStore(NextGpr, GprPtr);
+
+  if (AI.isIndirect())
+    return CGF.Builder.CreateLoad(ResAddr, "indirect_arg");
+
+  return ResAddr;
+}
+
+OR1KABIInfo::ABIKind OR1KABIInfo::parseABI(const char *Name) {
+  if (!strcmp("new", Name))
+    return NewABI;
+
+  return DefaultABI;
 }
 
 
@@ -5255,13 +5355,6 @@ ABIArgInfo OR1KABIInfo::classifyArgumentType(QualType Ty) const {
   return (isPromotableIntegerType(Ty) ?
           ABIArgInfo::getExtend() : ABIArgInfo::getDirect());
 }
-
-void OR1KTargetCodeGenInfo::SetTargetAttributes(const Decl *D,
-                                                llvm::GlobalValue *GV,
-                                                CodeGen::CodeGenModule &M)
-                                                  const {
-}
-
 
 //===----------------------------------------------------------------------===//
 // MSP430 ABI Implementation
@@ -6277,8 +6370,10 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
   case llvm::Triple::msp430:
     return *(TheTargetCodeGenInfo = new MSP430TargetCodeGenInfo(Types));
 
-  case llvm::Triple::or1k:
-    return *(TheTargetCodeGenInfo = new OR1KTargetCodeGenInfo(Types));
+  case llvm::Triple::or1k: {
+    OR1KABIInfo::ABIKind ABI = OR1KABIInfo::parseABI(getTarget().getABI());
+    return *(TheTargetCodeGenInfo = new OR1KTargetCodeGenInfo(Types, ABI));
+  }
 
   case llvm::Triple::systemz:
     return *(TheTargetCodeGenInfo = new SystemZTargetCodeGenInfo(Types));

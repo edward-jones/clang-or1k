@@ -1577,16 +1577,24 @@ public:
 namespace {
 // OR1K abstract base class
 class OR1KTargetInfo : public TargetInfo {
-  static const char * const GCCRegNames[];
-  
+public: 
   enum CPUKind {
-    CK_NONE,
-    CK_GENERIC,
+    CK_None,
+    CK_Generic,
     CK_OR1200,
-  } CPU;
+  };
+
+  enum ABIKind {
+    AK_None,
+    AK_DefaultABI,
+    AK_NewABI
+  };
 
 public:
-  OR1KTargetInfo(const llvm::Triple &triple) : TargetInfo(triple) {
+  OR1KTargetInfo(const llvm::Triple &triple)
+   : TargetInfo(triple), CPU(CK_Generic), ABI(AK_DefaultABI),
+     HasMul(false), HasDiv(false), HasRor(false), HasCmov(false), HasMAC(false),
+     HasExt(false), HasSFII(false), HasFBit(false) {
     LongLongAlign = 32;
     DoubleAlign = 32;
     LongDoubleAlign = 32;
@@ -1596,41 +1604,61 @@ public:
   }
 
   void getTargetBuiltins(const Builtin::Info *&Records,
-                                 unsigned &NumRecords) const override {
+                         unsigned &NumRecords) const override {
     // FIXME: Implement.
     Records = 0;
     NumRecords = 0;
   }
 
   void getTargetDefines(const LangOptions &Opts,
-                                MacroBuilder &Builder) const override;
+                        MacroBuilder &Builder) const override;
 
-  bool hasFeature(StringRef Feature) const override {
-    return Feature == "or1k";
-  }
+  void getDefaultFeatures(llvm::StringMap<bool> &Features) const override;
+
+  bool hasFeature(StringRef Feature) const override;
+
+  bool handleTargetFeatures(std::vector<std::string> &Features,
+                            DiagnosticsEngine &Diags) override;
 
   void setFeatureEnabled(llvm::StringMap<bool> &Features,
-                                 StringRef Name, bool Enabled) const override {
-    if (Name == "mul" ||
-        Name == "div" ||
-        Name == "ror" ||
-        Name == "cmov" ||
-        Name == "mac" ||
-        Name == "ext" ||
-        Name == "sfii" ||
-        Name == "fbit") {
-      Features[Name] = Enabled;
+                         StringRef Name, bool Enabled) const override;
+
+  BuiltinVaListKind getBuiltinVaListKind() const override {
+    switch (ABI) {
+    case AK_DefaultABI:
+      return TargetInfo::VoidPtrBuiltinVaList;
+    case AK_NewABI:
+      return TargetInfo::OR1KNewABIBuiltinVaList;
+    default:
+      llvm_unreachable("Unknown ABI!");
     }
   }
 
-  BuiltinVaListKind getBuiltinVaListKind() const override {
-    return TargetInfo::VoidPtrBuiltinVaList;
+  bool setCPU(const std::string &Name) override {
+    CPU = llvm::StringSwitch<CPUKind>(Name)
+           .Case("generic", CK_Generic)
+           .Case("or1200", CK_OR1200)
+           .Default(CK_None);
+    
+    return CPU != CK_None;
+  }
+
+  const char *getABI() const override {
+    return ABI == AK_NewABI ? "new" :  "default";
+  }
+
+  bool setABI(const std::string &Name) override {
+    ABI = llvm::StringSwitch<ABIKind>(Name)
+           .Case("default", AK_DefaultABI)
+           .Case("new", AK_NewABI)
+           .Default(AK_None);
+    return ABI != AK_None;
   }
 
   void getGCCRegNames(const char * const *&Names,
-                              unsigned &NumNames) const override;
+                      unsigned &NumNames) const override;
   void getGCCRegAliases(const GCCRegAlias *&Aliases,
-                                unsigned &NumAliases) const override;
+                        unsigned &NumAliases) const override;
   bool validateAsmConstraint(const char *&Name,
                              TargetInfo::ConstraintInfo &Info) const override {
     switch (*Name) {
@@ -1643,22 +1671,24 @@ public:
       return true;
     }
   }
+
   const char *getClobbers() const override {
     return "";
   }
 
-  bool setCPU(const std::string &Name) override {
-    CPU = llvm::StringSwitch<CPUKind>(Name)
-      .Case("generic" , CK_GENERIC)
-      .Case("or1200",   CK_OR1200)
-      .Default(CK_NONE);
-    
-    if (CPU == CK_NONE) {
-      return false;
-    }
+private:
+  CPUKind CPU;
+  ABIKind ABI;
+  bool HasMul;
+  bool HasDiv;
+  bool HasRor;
+  bool HasCmov;
+  bool HasMAC;
+  bool HasExt;
+  bool HasSFII;
+  bool HasFBit;
 
-    return true;
-  }
+  static const char * const GCCRegNames[];
 };
 
 /// OR1KTargetInfo::getTargetDefines - Return a set of the OR1K-specific
@@ -1671,6 +1701,82 @@ void OR1KTargetInfo::getTargetDefines(const LangOptions &Opts,
 
   // Subtarget options.
   Builder.defineMacro("__REGISTER_PREFIX__", "");
+}
+
+void OR1KTargetInfo::getDefaultFeatures(llvm::StringMap<bool> &Features) const {
+  if (CPU == CK_OR1200) {
+    Features["mul"] = true;
+    Features["ror"] = true;
+    Features["ext"] = true;
+    Features["sfii"] = true;
+  }
+}
+
+bool OR1KTargetInfo::hasFeature(llvm::StringRef Name) const {
+  return llvm::StringSwitch<bool>(Name)
+          .Case("mul", HasMul)
+          .Case("div", HasDiv)
+          .Case("ror", HasRor)
+          .Case("cmov", HasCmov)
+          .Case("mac", HasMAC)
+          .Case("ext", HasExt)
+          .Case("sfii", HasSFII)
+          .Case("fbit", HasFBit)
+          .Default(false);
+}
+
+void OR1KTargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
+                                       StringRef Name, bool Enabled) const {
+  if (Name == "mul" || Name == "div" || Name == "ror" || Name == "cmov" ||
+      Name == "mac" || Name == "ext" || Name == "sfii" || Name == "fbit")
+    Features[Name] = Enabled;
+}
+
+bool OR1KTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
+                                          DiagnosticsEngine &Diags) {
+  for (std::string &Elem : Features) {
+    StringRef Name(Elem);
+
+    bool Enabled = Name[0] != '-';
+    if (Name[0] == '+' || Name[0] == '-')
+      Name = Name.substr(1);
+
+    if (Name == "mul") {
+      HasMul = Enabled;
+      continue;
+    }
+    if (Name == "div") {
+      HasDiv = Enabled;
+      continue;
+    }
+    if (Name == "ror") {
+      HasRor = Enabled;
+      continue;
+    }
+    if (Name == "cmov") {
+      HasCmov = Enabled;
+      continue;
+    }
+    if (Name == "ext") {
+      HasExt = Enabled;
+      continue;
+    }
+    if (Name == "sfii") {
+      HasSFII = Enabled;
+      continue;
+    }
+    if (Name == "fbit") {
+      HasFBit = Enabled;
+      continue;
+    }
+
+    llvm_unreachable(0);
+  }
+
+  // Append ABI target feature for the backend.
+  Features.push_back(ABI == AK_NewABI ? "+abi-new" : "-abi-new");
+  
+  return true;
 }
 
 const char * const OR1KTargetInfo::GCCRegNames[] = {
