@@ -1594,7 +1594,8 @@ public:
   OR1KTargetInfo(const llvm::Triple &triple)
    : TargetInfo(triple), CPU(CK_Generic), ABI(AK_DefaultABI),
      HasMul(false), HasDiv(false), HasRor(false), HasCmov(false), HasMAC(false),
-     HasExt(false), HasSFII(false), HasFBit(false) {
+     HasExt(false), HasSFII(false), HasFBit(false), HasNoDelay(false),
+     HasCompatDelay(false) {
     LongLongAlign = 32;
     DoubleAlign = 32;
     LongDoubleAlign = 32;
@@ -1687,6 +1688,8 @@ private:
   bool HasExt;
   bool HasSFII;
   bool HasFBit;
+  bool HasNoDelay;
+  bool HasCompatDelay;
 
   static const char * const GCCRegNames[];
 };
@@ -1701,6 +1704,14 @@ void OR1KTargetInfo::getTargetDefines(const LangOptions &Opts,
 
   // Subtarget options.
   Builder.defineMacro("__REGISTER_PREFIX__", "");
+
+  if (HasNoDelay) {
+    Builder.defineMacro("__OR1K_NODELAY__", "");
+  } else if (HasCompatDelay) {
+    Builder.defineMacro("__OR1K_DELAY_COMPAT__", "");
+  } else {
+    Builder.defineMacro("__OR1K_DELAY__", "");
+  }
 }
 
 void OR1KTargetInfo::getDefaultFeatures(llvm::StringMap<bool> &Features) const {
@@ -1722,13 +1733,16 @@ bool OR1KTargetInfo::hasFeature(llvm::StringRef Name) const {
           .Case("ext", HasExt)
           .Case("sfii", HasSFII)
           .Case("fbit", HasFBit)
+          .Case("no-delay", HasNoDelay)
+          .Case("compat-delay", HasCompatDelay)
           .Default(false);
 }
 
 void OR1KTargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
                                        StringRef Name, bool Enabled) const {
   if (Name == "mul" || Name == "div" || Name == "ror" || Name == "cmov" ||
-      Name == "mac" || Name == "ext" || Name == "sfii" || Name == "fbit")
+      Name == "mac" || Name == "ext" || Name == "sfii" || Name == "fbit" ||
+      Name == "no-delay" || Name == "compat-delay")
     Features[Name] = Enabled;
 }
 
@@ -1769,9 +1783,19 @@ bool OR1KTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
       HasFBit = Enabled;
       continue;
     }
+    if (Name == "no-delay") {
+      HasNoDelay = Enabled;
+      continue;
+    }
+    if (Name == "compat-delay") {
+      HasCompatDelay = Enabled;
+      continue;
+    }
 
     llvm_unreachable(0);
   }
+
+  assert(!(HasNoDelay && HasCompatDelay) && "Can't have both -mno-delay and -mcompat-delay");
 
   // Append ABI target feature for the backend.
   Features.push_back(ABI == AK_NewABI ? "+abi-new" : "-abi-new");

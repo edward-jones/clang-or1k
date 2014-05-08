@@ -1237,6 +1237,86 @@ static void getSparcTargetFeatures(const ArgList &Args,
     Features.push_back("+soft-float");
 }
 
+static void getOR1KTargetFeatures(const llvm::Triple &Triple,
+                                 const ArgList &Args,
+                                 std::vector<const char *> &Features) {
+
+  if (Arg *A = Args.getLastArg(options::OPT_mhard_div,
+                               options::OPT_msoft_div)) {
+    if (A->getOption().matches(options::OPT_mhard_div))
+      Features.push_back("+div");
+    else
+      Features.push_back("-div");
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_mhard_mul,
+                               options::OPT_msoft_mul)) {
+    if (A->getOption().matches(options::OPT_mhard_mul))
+      Features.push_back("+mul");
+    else
+      Features.push_back("-mul");
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_mcmov,
+                               options::OPT_mno_cmov)) {
+    if (A->getOption().matches(options::OPT_mcmov))
+      Features.push_back("+cmov");
+    else
+      Features.push_back("-cmov");
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_mror,
+                               options::OPT_mno_ror)) {
+    if (A->getOption().matches(options::OPT_mror))
+      Features.push_back("+ror");
+    else
+      Features.push_back("-ror");
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_mmac,
+                               options::OPT_mno_mac)) {
+    if (A->getOption().matches(options::OPT_mmac))
+      Features.push_back("+mac");
+    else
+      Features.push_back("-mac");
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_mext,
+                               options::OPT_mno_ext)) {
+    if (A->getOption().matches(options::OPT_mext))
+      Features.push_back("+ext");
+    else
+      Features.push_back("-ext");
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_msfii,
+                               options::OPT_mno_sfii)) {
+    if (A->getOption().matches(options::OPT_msfii))
+      Features.push_back("+sfii");
+    else
+      Features.push_back("-sfii");
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_mfbit,
+                               options::OPT_mno_fbit)) {
+    if (A->getOption().matches(options::OPT_mfbit))
+      Features.push_back("+fbit");
+    else
+      Features.push_back("-fbit");
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_mdelay,
+                               options::OPT_mno_delay,
+                               options::OPT_mcompat_delay)) {
+    if (A->getOption().matches(options::OPT_mno_delay)) {
+      Features.push_back("+no-delay");
+    } else if (A->getOption().matches(options::OPT_mcompat_delay)) {
+      Features.push_back("+compat-delay");
+    }
+  }
+
+}
+
 void Clang::AddOR1KTargetArgs(const ArgList &Args,
                               ArgStringList &CmdArgs) const {
   const Driver &D = getToolChain().getDriver();
@@ -1279,90 +1359,6 @@ void Clang::AddOR1KTargetArgs(const ArgList &Args,
     CmdArgs.push_back("-msoft-float");
     CmdArgs.push_back("-mfloat-abi");
     CmdArgs.push_back("soft");
-  }
-
-  if (Arg *A = Args.getLastArg(options::OPT_mhard_div,
-                               options::OPT_msoft_div)) {
-    CmdArgs.push_back("-target-feature");
-    if (A->getOption().matches(options::OPT_mhard_div))
-      CmdArgs.push_back("+div");
-    else
-      CmdArgs.push_back("-div");
-  }
-
-  if (Arg *A = Args.getLastArg(options::OPT_mhard_mul,
-                               options::OPT_msoft_mul)) {
-    CmdArgs.push_back("-target-feature");
-    if (A->getOption().matches(options::OPT_mhard_mul))
-      CmdArgs.push_back("+mul");
-    else
-      CmdArgs.push_back("-mul");
-  }
-
-  if (Arg *A = Args.getLastArg(options::OPT_mcmov,
-                               options::OPT_mno_cmov)) {
-    CmdArgs.push_back("-target-feature");
-    if (A->getOption().matches(options::OPT_mcmov))
-      CmdArgs.push_back("+cmov");
-    else
-      CmdArgs.push_back("-cmov");
-  }
-
-  if (Arg *A = Args.getLastArg(options::OPT_mror,
-                               options::OPT_mno_ror)) {
-    CmdArgs.push_back("-target-feature");
-    if (A->getOption().matches(options::OPT_mror))
-      CmdArgs.push_back("+ror");
-    else
-      CmdArgs.push_back("-ror");
-  }
-
-  if (Arg *A = Args.getLastArg(options::OPT_mmac,
-                               options::OPT_mno_mac)) {
-    CmdArgs.push_back("-target-feature");
-    if (A->getOption().matches(options::OPT_mmac))
-      CmdArgs.push_back("+mac");
-    else
-      CmdArgs.push_back("-mac");
-  }
-
-  if (Arg *A = Args.getLastArg(options::OPT_mext,
-                               options::OPT_mno_ext)) {
-    CmdArgs.push_back("-target-feature");
-    if (A->getOption().matches(options::OPT_mext))
-      CmdArgs.push_back("+ext");
-    else
-      CmdArgs.push_back("-ext");
-  }
-
-  if (Arg *A = Args.getLastArg(options::OPT_msfii,
-                               options::OPT_mno_sfii)) {
-    CmdArgs.push_back("-target-feature");
-    if (A->getOption().matches(options::OPT_msfii))
-      CmdArgs.push_back("+sfii");
-    else
-      CmdArgs.push_back("-sfii");
-  }
-
-  if (Arg *A = Args.getLastArg(options::OPT_mfbit,
-                               options::OPT_mno_fbit)) {
-    CmdArgs.push_back("-target-feature");
-    if (A->getOption().matches(options::OPT_mfbit))
-      CmdArgs.push_back("+fbit");
-    else
-      CmdArgs.push_back("-fbit");
-  }
-
-  if (Arg *A = Args.getLastArg(options::OPT_mdelay,
-                               options::OPT_mno_delay,
-                               options::OPT_mcompat_delay)) {
-    if (A->getOption().matches(options::OPT_mno_delay)) {
-      CmdArgs.push_back("-mllvm");
-      CmdArgs.push_back("-disable-or1k-delay-filler");
-    } else if (A->getOption().matches(options::OPT_mcompat_delay)) {
-      CmdArgs.push_back("-mllvm");
-      CmdArgs.push_back("-compat-or1k-delay-filler");
-    }
   }
 }
 
@@ -1707,6 +1703,9 @@ static void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
   case llvm::Triple::x86:
   case llvm::Triple::x86_64:
     getX86TargetFeatures(Triple, Args, Features);
+    break;
+  case llvm::Triple::or1k:
+    getOR1KTargetFeatures(Triple, Args, Features);
     break;
   }
 
