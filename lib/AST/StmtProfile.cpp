@@ -281,6 +281,8 @@ void OMPClauseProfiler::VisitOMPSafelenClause(const OMPSafelenClause *C) {
 
 void OMPClauseProfiler::VisitOMPDefaultClause(const OMPDefaultClause *C) { }
 
+void OMPClauseProfiler::VisitOMPProcBindClause(const OMPProcBindClause *C) { }
+
 template<typename T>
 void OMPClauseProfiler::VisitOMPClauseList(T *Node) {
   for (auto *I : Node->varlists())
@@ -296,6 +298,10 @@ void OMPClauseProfiler::VisitOMPFirstprivateClause(
 }
 void OMPClauseProfiler::VisitOMPSharedClause(const OMPSharedClause *C) {
   VisitOMPClauseList(C);
+}
+void OMPClauseProfiler::VisitOMPLinearClause(const OMPLinearClause *C) {
+  VisitOMPClauseList(C);
+  Profiler->VisitStmt(C->getStep());
 }
 void OMPClauseProfiler::VisitOMPCopyinClause(const OMPCopyinClause *C) {
   VisitOMPClauseList(C);

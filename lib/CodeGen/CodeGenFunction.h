@@ -35,51 +35,51 @@
 #include "llvm/Support/Debug.h"
 
 namespace llvm {
-  class BasicBlock;
-  class LLVMContext;
-  class MDNode;
-  class Module;
-  class SwitchInst;
-  class Twine;
-  class Value;
-  class CallSite;
+class BasicBlock;
+class LLVMContext;
+class MDNode;
+class Module;
+class SwitchInst;
+class Twine;
+class Value;
+class CallSite;
 }
 
 namespace clang {
-  class ASTContext;
-  class BlockDecl;
-  class CXXDestructorDecl;
-  class CXXForRangeStmt;
-  class CXXTryStmt;
-  class Decl;
-  class LabelDecl;
-  class EnumConstantDecl;
-  class FunctionDecl;
-  class FunctionProtoType;
-  class LabelStmt;
-  class ObjCContainerDecl;
-  class ObjCInterfaceDecl;
-  class ObjCIvarDecl;
-  class ObjCMethodDecl;
-  class ObjCImplementationDecl;
-  class ObjCPropertyImplDecl;
-  class TargetInfo;
-  class TargetCodeGenInfo;
-  class VarDecl;
-  class ObjCForCollectionStmt;
-  class ObjCAtTryStmt;
-  class ObjCAtThrowStmt;
-  class ObjCAtSynchronizedStmt;
-  class ObjCAutoreleasePoolStmt;
+class ASTContext;
+class BlockDecl;
+class CXXDestructorDecl;
+class CXXForRangeStmt;
+class CXXTryStmt;
+class Decl;
+class LabelDecl;
+class EnumConstantDecl;
+class FunctionDecl;
+class FunctionProtoType;
+class LabelStmt;
+class ObjCContainerDecl;
+class ObjCInterfaceDecl;
+class ObjCIvarDecl;
+class ObjCMethodDecl;
+class ObjCImplementationDecl;
+class ObjCPropertyImplDecl;
+class TargetInfo;
+class TargetCodeGenInfo;
+class VarDecl;
+class ObjCForCollectionStmt;
+class ObjCAtTryStmt;
+class ObjCAtThrowStmt;
+class ObjCAtSynchronizedStmt;
+class ObjCAutoreleasePoolStmt;
 
 namespace CodeGen {
-  class CodeGenTypes;
-  class CGFunctionInfo;
-  class CGRecordLayout;
-  class CGBlockInfo;
-  class CGCXXABI;
-  class BlockFlags;
-  class BlockFieldFlags;
+class CodeGenTypes;
+class CGFunctionInfo;
+class CGRecordLayout;
+class CGBlockInfo;
+class CGCXXABI;
+class BlockFlags;
+class BlockFieldFlags;
 
 /// The kind of evaluation to perform on values of a particular
 /// type.  Basically, is the code in CGExprScalar, CGExprComplex, or
@@ -195,6 +195,8 @@ public:
 
     /// \brief Emit the captured statement body.
     virtual void EmitBody(CodeGenFunction &CGF, Stmt *S) {
+      RegionCounter Cnt = CGF.getPGORegionCounter(S);
+      Cnt.beginRegion(CGF.Builder);
       CGF.EmitStmt(S);
     }
 
@@ -1140,12 +1142,16 @@ public:
 
   void GenerateCode(GlobalDecl GD, llvm::Function *Fn,
                     const CGFunctionInfo &FnInfo);
+  /// \brief Emit code for the start of a function.
+  /// \param Loc       The location to be associated with the function.
+  /// \param StartLoc  The location of the function body.
   void StartFunction(GlobalDecl GD,
                      QualType RetTy,
                      llvm::Function *Fn,
                      const CGFunctionInfo &FnInfo,
                      const FunctionArgList &Args,
-                     SourceLocation StartLoc);
+                     SourceLocation Loc = SourceLocation(),
+                     SourceLocation StartLoc = SourceLocation());
 
   void EmitConstructorBody(FunctionArgList &Args);
   void EmitDestructorBody(FunctionArgList &Args);
@@ -1872,6 +1878,9 @@ public:
   llvm::Function *GenerateCapturedStmtFunction(const CapturedDecl *CD,
                                                const RecordDecl *RD,
                                                SourceLocation Loc);
+  llvm::Value *GenerateCapturedStmtArgument(const CapturedStmt &S);
+
+  void EmitOMPParallelDirective(const OMPParallelDirective &S);
 
   //===--------------------------------------------------------------------===//
   //                         LValue Expression Emission

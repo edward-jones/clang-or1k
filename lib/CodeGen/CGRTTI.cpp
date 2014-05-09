@@ -678,17 +678,16 @@ llvm::Constant *RTTIBuilder::BuildTypeInfo(QualType Ty, bool Force) {
 
   // Give the type_info object and name the formal visibility of the
   // type itself.
-  Visibility formalVisibility = Ty->getVisibility();
-  llvm::GlobalValue::VisibilityTypes llvmVisibility =
-    CodeGenModule::GetLLVMVisibility(formalVisibility);
+  llvm::GlobalValue::VisibilityTypes llvmVisibility;
+  if (llvm::GlobalValue::isLocalLinkage(Linkage))
+    // If the linkage is local, only default visibility makes sense.
+    llvmVisibility = llvm::GlobalValue::DefaultVisibility;
+  else if (RTTIUniqueness == CGCXXABI::RUK_NonUniqueHidden)
+    llvmVisibility = llvm::GlobalValue::HiddenVisibility;
+  else
+    llvmVisibility = CodeGenModule::GetLLVMVisibility(Ty->getVisibility());
   TypeName->setVisibility(llvmVisibility);
   GV->setVisibility(llvmVisibility);
-
-  // FIXME: integrate this better into the above when we move to trunk
-  if (RTTIUniqueness == CGCXXABI::RUK_NonUniqueHidden) {
-    TypeName->setVisibility(llvm::GlobalValue::HiddenVisibility);
-    GV->setVisibility(llvm::GlobalValue::HiddenVisibility);
-  }
 
   return llvm::ConstantExpr::getBitCast(GV, CGM.Int8PtrTy);
 }
@@ -984,7 +983,8 @@ void CodeGenModule::EmitFundamentalRTTIDescriptors() {
                                   Context.UnsignedShortTy, Context.IntTy,
                                   Context.UnsignedIntTy, Context.LongTy, 
                                   Context.UnsignedLongTy, Context.LongLongTy, 
-                                  Context.UnsignedLongLongTy, Context.FloatTy,
+                                  Context.UnsignedLongLongTy,
+                                  Context.HalfTy, Context.FloatTy,
                                   Context.DoubleTy, Context.LongDoubleTy,
                                   Context.Char16Ty, Context.Char32Ty };
   for (unsigned i = 0; i < llvm::array_lengthof(FundamentalTypes); ++i)

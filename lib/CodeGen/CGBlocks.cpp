@@ -246,7 +246,7 @@ static bool isSafeForCXXConstantCapture(QualType type) {
   // Only records can be unsafe.
   if (!recordType) return true;
 
-  const CXXRecordDecl *record = cast<CXXRecordDecl>(recordType->getDecl());
+  const auto *record = cast<CXXRecordDecl>(recordType->getDecl());
 
   // Maintain semantics for classes with non-trivial dtors or copy ctors.
   if (!record->hasTrivialDestructor()) return false;
@@ -1093,7 +1093,7 @@ CodeGenFunction::GenerateBlockFunction(GlobalDecl GD,
   // to be local to this function as well, in case they're directly
   // referenced in a block.
   for (DeclMapTy::const_iterator i = ldm.begin(), e = ldm.end(); i != e; ++i) {
-    const VarDecl *var = dyn_cast<VarDecl>(i->first);
+    const auto *var = dyn_cast<VarDecl>(i->first);
     if (var && !var->hasLocalStorage())
       LocalDeclMap[var] = i->second;
   }
@@ -1135,6 +1135,7 @@ CodeGenFunction::GenerateBlockFunction(GlobalDecl GD,
 
   // Begin generating the function.
   StartFunction(blockDecl, fnType->getReturnType(), fn, fnInfo, args,
+                blockDecl->getLocation(),
                 blockInfo.getBlockExpr()->getBody()->getLocStart());
 
   // Okay.  Undo some of what StartFunction did.
@@ -1306,7 +1307,7 @@ CodeGenFunction::GenerateCopyHelperFunction(const CGBlockInfo &blockInfo) {
                                           false);
   // Create a scope with an artificial location for the body of this function.
   ArtificialLocation AL(*this, Builder);
-  StartFunction(FD, C.VoidTy, Fn, FI, args, SourceLocation());
+  StartFunction(FD, C.VoidTy, Fn, FI, args);
   AL.Emit();
 
   llvm::Type *structPtrTy = blockInfo.StructureType->getPointerTo();
@@ -1395,7 +1396,7 @@ CodeGenFunction::GenerateCopyHelperFunction(const CGBlockInfo &blockInfo) {
         // storeStrong doesn't over-release) and then call storeStrong.
         // This is a workaround to not having an initStrong call.
         if (CGM.getCodeGenOpts().OptimizationLevel == 0) {
-          llvm::PointerType *ty = cast<llvm::PointerType>(srcValue->getType());
+          auto *ty = cast<llvm::PointerType>(srcValue->getType());
           llvm::Value *null = llvm::ConstantPointerNull::get(ty);
           Builder.CreateStore(null, dstField);
           EmitARCStoreStrongCall(dstField, srcValue, true);
@@ -1476,7 +1477,7 @@ CodeGenFunction::GenerateDestroyHelperFunction(const CGBlockInfo &blockInfo) {
                                           false, false);
   // Create a scope with an artificial location for the body of this function.
   ArtificialLocation AL(*this, Builder);
-  StartFunction(FD, C.VoidTy, Fn, FI, args, SourceLocation());
+  StartFunction(FD, C.VoidTy, Fn, FI, args);
   AL.Emit();
 
   llvm::Type *structPtrTy = blockInfo.StructureType->getPointerTo();
@@ -1765,7 +1766,7 @@ generateByrefCopyHelper(CodeGenFunction &CGF,
                                           SC_Static,
                                           false, false);
 
-  CGF.StartFunction(FD, R, Fn, FI, args, SourceLocation());
+  CGF.StartFunction(FD, R, Fn, FI, args);
 
   if (byrefInfo.needsCopy()) {
     llvm::Type *byrefPtrType = byrefType.getPointerTo(0);
@@ -1834,7 +1835,7 @@ generateByrefDisposeHelper(CodeGenFunction &CGF,
                                           SourceLocation(), II, R, 0,
                                           SC_Static,
                                           false, false);
-  CGF.StartFunction(FD, R, Fn, FI, args, SourceLocation());
+  CGF.StartFunction(FD, R, Fn, FI, args);
 
   if (byrefInfo.needsDispose()) {
     llvm::Value *V = CGF.GetAddrOfLocalVar(&src);
@@ -2230,9 +2231,8 @@ static void configureBlocksRuntimeObject(CodeGenModule &CGM,
                                          llvm::Constant *C) {
   if (!CGM.getLangOpts().BlocksRuntimeOptional) return;
 
-  llvm::GlobalValue *GV = cast<llvm::GlobalValue>(C->stripPointerCasts());
-  if (GV->isDeclaration() &&
-      GV->getLinkage() == llvm::GlobalValue::ExternalLinkage)
+  auto *GV = cast<llvm::GlobalValue>(C->stripPointerCasts());
+  if (GV->isDeclaration() && GV->hasExternalLinkage())
     GV->setLinkage(llvm::GlobalValue::ExternalWeakLinkage);
 }
 

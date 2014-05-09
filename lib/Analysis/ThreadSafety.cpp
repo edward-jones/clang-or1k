@@ -23,6 +23,7 @@
 #include "clang/Analysis/Analyses/PostOrderCFGView.h"
 #include "clang/Analysis/Analyses/ThreadSafety.h"
 #include "clang/Analysis/Analyses/ThreadSafetyTIL.h"
+#include "clang/Analysis/Analyses/ThreadSafetyTraverse.h"
 #include "clang/Analysis/Analyses/ThreadSafetyCommon.h"
 #include "clang/Analysis/AnalysisContext.h"
 #include "clang/Analysis/CFG.h"
@@ -1068,8 +1069,8 @@ public:
   }
 
   /// Builds the variable map.
-  void traverseCFG(CFG *CFGraph, PostOrderCFGView *SortedGraph,
-                     std::vector<CFGBlockInfo> &BlockInfo);
+  void traverseCFG(CFG *CFGraph, const PostOrderCFGView *SortedGraph,
+                   std::vector<CFGBlockInfo> &BlockInfo);
 
 protected:
   // Get the current context index
@@ -1288,15 +1289,13 @@ void LocalVariableMap::intersectBackEdge(Context C1, Context C2) {
 //   ...                 { y -> y1           | x3 = 2, x2 = 1, ... }
 //
 void LocalVariableMap::traverseCFG(CFG *CFGraph,
-                                   PostOrderCFGView *SortedGraph,
+                                   const PostOrderCFGView *SortedGraph,
                                    std::vector<CFGBlockInfo> &BlockInfo) {
   PostOrderCFGView::CFGBlockSet VisitedBlocks(CFGraph);
 
   CtxIndices.resize(CFGraph->getNumBlockIDs());
 
-  for (PostOrderCFGView::iterator I = SortedGraph->begin(),
-       E = SortedGraph->end(); I!= E; ++I) {
-    const CFGBlock *CurrBlock = *I;
+  for (const auto *CurrBlock : *SortedGraph) {
     int CurrBlockID = CurrBlock->getBlockID();
     CFGBlockInfo *CurrBlockInfo = &BlockInfo[CurrBlockID];
 
@@ -1375,11 +1374,9 @@ void LocalVariableMap::traverseCFG(CFG *CFGraph,
 /// Find the appropriate source locations to use when producing diagnostics for
 /// each block in the CFG.
 static void findBlockLocations(CFG *CFGraph,
-                               PostOrderCFGView *SortedGraph,
+                               const PostOrderCFGView *SortedGraph,
                                std::vector<CFGBlockInfo> &BlockInfo) {
-  for (PostOrderCFGView::iterator I = SortedGraph->begin(),
-       E = SortedGraph->end(); I!= E; ++I) {
-    const CFGBlock *CurrBlock = *I;
+  for (const auto *CurrBlock : *SortedGraph) {
     CFGBlockInfo *CurrBlockInfo = &BlockInfo[CurrBlock->getBlockID()];
 
     // Find the source location of the last statement in the block, if the
@@ -1481,12 +1478,12 @@ static const ValueDecl *getValueDecl(const Expr *Exp) {
 }
 
 template <typename Ty>
-class has_arg_iterator {
+class has_arg_iterator_range {
   typedef char yes[1];
   typedef char no[2];
 
   template <typename Inner>
-  static yes& test(Inner *I, decltype(I->args_begin()) * = nullptr);
+  static yes& test(Inner *I, decltype(I->args()) * = nullptr);
 
   template <typename>
   static no& test(...);
@@ -1525,7 +1522,7 @@ static StringRef ClassifyDiagnostic(const ValueDecl *VD) {
 }
 
 template <typename AttrTy>
-static typename std::enable_if<!has_arg_iterator<AttrTy>::value,
+static typename std::enable_if<!has_arg_iterator_range<AttrTy>::value,
                                StringRef>::type
 ClassifyDiagnostic(const AttrTy *A) {
   if (const ValueDecl *VD = getValueDecl(A->getArg()))
@@ -1534,11 +1531,11 @@ ClassifyDiagnostic(const AttrTy *A) {
 }
 
 template <typename AttrTy>
-static typename std::enable_if<has_arg_iterator<AttrTy>::value,
+static typename std::enable_if<has_arg_iterator_range<AttrTy>::value,
                                StringRef>::type
 ClassifyDiagnostic(const AttrTy *A) {
-  for (auto I = A->args_begin(), E = A->args_end(); I != E; ++I) {
-    if (const ValueDecl *VD = getValueDecl(*I))
+  for (const auto *Arg : A->args()) {
+    if (const ValueDecl *VD = getValueDecl(Arg))
       return ClassifyDiagnostic(VD);
   }
   return "mutex";
@@ -1615,8 +1612,6 @@ template <typename AttrType>
 void ThreadSafetyAnalyzer::getMutexIDs(MutexIDList &Mtxs, AttrType *Attr,
                                        Expr *Exp, const NamedDecl *D,
                                        VarDecl *SelfDecl) {
-  typedef typename AttrType::args_iterator iterator_type;
-
   if (Attr->args_size() == 0) {
     // The mutex held is the "this" object.
     SExpr Mu(0, Exp, D, SelfDecl);
@@ -1627,10 +1622,10 @@ void ThreadSafetyAnalyzer::getMutexIDs(MutexIDList &Mtxs, AttrType *Attr,
     return;
   }
 
-  for (iterator_type I=Attr->args_begin(), E=Attr->args_end(); I != E; ++I) {
-    SExpr Mu(*I, Exp, D, SelfDecl);
+  for (const auto *Arg : Attr->args()) {
+    SExpr Mu(Arg, Exp, D, SelfDecl);
     if (!Mu.isValid())
-      SExpr::warnInvalidLock(Handler, *I, Exp, D, ClassifyDiagnostic(Attr));
+      SExpr::warnInvalidLock(Handler, Arg, Exp, D, ClassifyDiagnostic(Attr));
     else
       Mtxs.push_back_nodup(Mu);
   }
@@ -2061,21 +2056,16 @@ void BuildLockset::handleCall(Expr *Exp, const NamedDecl *D, VarDecl *VD) {
 
       case attr::RequiresCapability: {
         RequiresCapabilityAttr *A = cast<RequiresCapabilityAttr>(At);
-
-        for (RequiresCapabilityAttr::args_iterator I = A->args_begin(),
-             E = A->args_end(); I != E; ++I)
-          warnIfMutexNotHeld(D, Exp, A->isShared() ? AK_Read : AK_Written, *I,
+        for (auto *Arg : A->args())
+          warnIfMutexNotHeld(D, Exp, A->isShared() ? AK_Read : AK_Written, Arg,
                              POK_FunctionCall, ClassifyDiagnostic(A));
         break;
       }
 
       case attr::LocksExcluded: {
         LocksExcludedAttr *A = cast<LocksExcludedAttr>(At);
-
-        for (LocksExcludedAttr::args_iterator I = A->args_begin(),
-            E = A->args_end(); I != E; ++I) {
-          warnIfMutexHeld(D, Exp, *I, ClassifyDiagnostic(A));
-        }
+        for (auto *Arg : A->args())
+          warnIfMutexHeld(D, Exp, Arg, ClassifyDiagnostic(A));
         break;
       }
 
@@ -2373,8 +2363,8 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
   // AC.dumpCFG(true);
   // threadSafety::printSCFG(walker);
 
-  CFG *CFGraph = walker.CFGraph;
-  const NamedDecl *D = walker.FDecl;
+  CFG *CFGraph = walker.getGraph();
+  const NamedDecl *D = walker.getDecl();
 
   if (D->hasAttr<NoThreadSafetyAnalysisAttr>())
     return;
@@ -2394,7 +2384,7 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
   // We need to explore the CFG via a "topological" ordering.
   // That way, we will be guaranteed to have information about required
   // predecessor locksets when exploring a new block.
-  PostOrderCFGView *SortedGraph = walker.SortedGraph;
+  const PostOrderCFGView *SortedGraph = walker.getSortedGraph();
   PostOrderCFGView::CFGBlockSet VisitedBlocks(CFGraph);
 
   // Mark entry block as reachable
@@ -2423,23 +2413,22 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
     StringRef CapDiagKind = "mutex";
 
     SourceLocation Loc = D->getLocation();
-    for (unsigned i = 0; i < ArgAttrs.size(); ++i) {
-      Attr *Attr = ArgAttrs[i];
+    for (const auto *Attr : ArgAttrs) {
       Loc = Attr->getLocation();
-      if (RequiresCapabilityAttr *A = dyn_cast<RequiresCapabilityAttr>(Attr)) {
+      if (const auto *A = dyn_cast<RequiresCapabilityAttr>(Attr)) {
         getMutexIDs(A->isShared() ? SharedLocksToAdd : ExclusiveLocksToAdd, A,
                     0, D);
         CapDiagKind = ClassifyDiagnostic(A);
-      } else if (auto *A = dyn_cast<ReleaseCapabilityAttr>(Attr)) {
+      } else if (const auto *A = dyn_cast<ReleaseCapabilityAttr>(Attr)) {
         // UNLOCK_FUNCTION() is used to hide the underlying lock implementation.
         // We must ignore such methods.
         if (A->args_size() == 0)
           return;
         // FIXME -- deal with exclusive vs. shared unlock functions?
-        getMutexIDs(ExclusiveLocksToAdd, A, (Expr*) 0, D);
-        getMutexIDs(LocksReleased, A, (Expr*) 0, D);
+        getMutexIDs(ExclusiveLocksToAdd, A, nullptr, D);
+        getMutexIDs(LocksReleased, A, nullptr, D);
         CapDiagKind = ClassifyDiagnostic(A);
-      } else if (auto *A = dyn_cast<AcquireCapabilityAttr>(Attr)) {
+      } else if (const auto *A = dyn_cast<AcquireCapabilityAttr>(Attr)) {
         if (A->args_size() == 0)
           return;
         getMutexIDs(A->isShared() ? SharedLocksAcquired
@@ -2464,9 +2453,7 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
               CapDiagKind);
   }
 
-  for (PostOrderCFGView::iterator I = SortedGraph->begin(),
-       E = SortedGraph->end(); I!= E; ++I) {
-    const CFGBlock *CurrBlock = *I;
+  for (const auto *CurrBlock : *SortedGraph) {
     int CurrBlockID = CurrBlock->getBlockID();
     CFGBlockInfo *CurrBlockInfo = &BlockInfo[CurrBlockID];
 
@@ -2492,7 +2479,7 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
          PE  = CurrBlock->pred_end(); PI != PE; ++PI) {
 
       // if *PI -> CurrBlock is a back edge
-      if (*PI == 0 || !VisitedBlocks.alreadySet(*PI))
+      if (*PI == nullptr || !VisitedBlocks.alreadySet(*PI))
         continue;
 
       int PrevBlockID = (*PI)->getBlockID();
@@ -2535,9 +2522,7 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
 
     // Process continue and break blocks. Assume that the lockset for the
     // resulting block is unaffected by any discrepancies in them.
-    for (unsigned SpecialI = 0, SpecialN = SpecialBlocks.size();
-         SpecialI < SpecialN; ++SpecialI) {
-      CFGBlock *PrevBlock = SpecialBlocks[SpecialI];
+    for (const auto *PrevBlock : SpecialBlocks) {
       int PrevBlockID = PrevBlock->getBlockID();
       CFGBlockInfo *PrevBlockInfo = &BlockInfo[PrevBlockID];
 
@@ -2633,17 +2618,14 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
   // by *-LOCK_FUNCTION and UNLOCK_FUNCTION.  The intersect below will then
   // issue the appropriate warning.
   // FIXME: the location here is not quite right.
-  for (unsigned i=0,n=ExclusiveLocksAcquired.size(); i<n; ++i) {
-    ExpectedExitSet.addLock(FactMan, ExclusiveLocksAcquired[i],
+  for (const auto &Lock : ExclusiveLocksAcquired)
+    ExpectedExitSet.addLock(FactMan, Lock,
                             LockData(D->getLocation(), LK_Exclusive));
-  }
-  for (unsigned i=0,n=SharedLocksAcquired.size(); i<n; ++i) {
-    ExpectedExitSet.addLock(FactMan, SharedLocksAcquired[i],
+  for (const auto &Lock : SharedLocksAcquired)
+    ExpectedExitSet.addLock(FactMan, Lock,
                             LockData(D->getLocation(), LK_Shared));
-  }
-  for (unsigned i=0,n=LocksReleased.size(); i<n; ++i) {
-    ExpectedExitSet.removeLock(FactMan, LocksReleased[i]);
-  }
+  for (const auto &Lock : LocksReleased)
+    ExpectedExitSet.removeLock(FactMan, Lock);
 
   // FIXME: Should we call this function for all blocks which exit the function?
   intersectAndWarn(ExpectedExitSet, Final->ExitSet,

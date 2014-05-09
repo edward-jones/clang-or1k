@@ -89,8 +89,8 @@ namespace {
       
       SourceLocation Open = SilenceableCondVal.getBegin();
       if (Open.isValid()) {
-        SourceLocation Close = SilenceableCondVal.getEnd();        
-        Close = S.PP.getLocForEndOfToken(Close);
+        SourceLocation Close = SilenceableCondVal.getEnd();
+        Close = S.getLocForEndOfToken(Close);
         if (Close.isValid()) {
           S.Diag(Open, diag::note_unreachable_silence)
             << FixItHint::CreateInsertion(Open, "/* DISABLES CODE */ (")
@@ -617,7 +617,7 @@ static bool SuggestInitializationFixit(Sema &S, const VarDecl *VD) {
   if (VD->getLocEnd().isMacroID())
     return false;
 
-  SourceLocation Loc = S.PP.getLocForEndOfToken(VD->getLocEnd());
+  SourceLocation Loc = S.getLocForEndOfToken(VD->getLocEnd());
 
   // Suggest possible initialization (if any).
   std::string Init = S.getFixItZeroInitializerForType(VariableTy, Loc);
@@ -1838,12 +1838,12 @@ AnalysisBasedWarnings::IssueWarnings(sema::AnalysisBasedWarnings::Policy P,
       .setAlwaysAdd(Stmt::AttributedStmtClass);
   }
 
+  // Install the logical handler for -Wtautological-overlap-compare
+  std::unique_ptr<LogicalErrorHandler> LEH;
   if (Diags.getDiagnosticLevel(diag::warn_tautological_overlap_comparison,
                                D->getLocStart())) {
-    LogicalErrorHandler LEH(S);
-    AC.getCFGBuildOptions().Observer = &LEH;
-    AC.getCFG();
-    AC.getCFGBuildOptions().Observer = 0;
+    LEH.reset(new LogicalErrorHandler(S));
+    AC.getCFGBuildOptions().Observer = LEH.get();
   }
 
   // Emit delayed diagnostics.
@@ -1989,6 +1989,13 @@ AnalysisBasedWarnings::IssueWarnings(sema::AnalysisBasedWarnings::Policy P,
     if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
       checkRecursiveFunction(S, FD, Body, AC);
     }
+  }
+
+  // If none of the previous checks caused a CFG build, trigger one here
+  // for -Wtautological-overlap-compare
+  if (Diags.getDiagnosticLevel(diag::warn_tautological_overlap_comparison,
+                               D->getLocStart())) {
+    AC.getCFG();
   }
 
   // Collect statistics about the CFG if it was built.

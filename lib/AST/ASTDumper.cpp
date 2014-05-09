@@ -444,6 +444,9 @@ void ASTDumper::dumpPointer(const void *Ptr) {
 }
 
 void ASTDumper::dumpLocation(SourceLocation Loc) {
+  if (!SM)
+    return;
+
   ColorScope Color(*this, LocationColor);
   SourceLocation SpellingLoc = SM->getSpellingLoc(Loc);
 
@@ -1684,6 +1687,7 @@ void ASTDumper::VisitPredefinedExpr(const PredefinedExpr *Node) {
   case PredefinedExpr::FuncDName:      OS <<  " __FUNCDNAME__"; break;
   case PredefinedExpr::LFunction:      OS <<  " L__FUNCTION__"; break;
   case PredefinedExpr::PrettyFunction: OS <<  " __PRETTY_FUNCTION__";break;
+  case PredefinedExpr::FuncSig:        OS <<  " __FUNCSIG__"; break;
   }
 }
 

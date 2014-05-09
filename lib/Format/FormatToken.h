@@ -33,19 +33,22 @@ enum TokenType {
   TT_BlockComment,
   TT_CastRParen,
   TT_ConditionalExpr,
+  TT_ConflictAlternative,
+  TT_ConflictEnd,
+  TT_ConflictStart,
   TT_CtorInitializerColon,
   TT_CtorInitializerComma,
   TT_DesignatedInitializerPeriod,
   TT_DictLiteral,
-  TT_ImplicitStringLiteral,
-  TT_InlineASMColon,
-  TT_InheritanceColon,
   TT_FunctionLBrace,
   TT_FunctionTypeLParen,
+  TT_ImplicitStringLiteral,
+  TT_InheritanceColon,
+  TT_InlineASMColon,
   TT_LambdaLSquare,
   TT_LineComment,
-  TT_ObjCBlockLParen,
   TT_ObjCBlockLBrace,
+  TT_ObjCBlockLParen,
   TT_ObjCDecl,
   TT_ObjCForIn,
   TT_ObjCMethodExpr,
@@ -57,6 +60,7 @@ enum TokenType {
   TT_PointerOrReference,
   TT_PureVirtualSpecifier,
   TT_RangeBasedForLoopColon,
+  TT_RegexLiteral,
   TT_StartOfName,
   TT_TemplateCloser,
   TT_TemplateOpener,
@@ -103,8 +107,9 @@ struct FormatToken {
         UnbreakableTailLength(0), BindingStrength(0), NestingLevel(0),
         SplitPenalty(0), LongestObjCSelectorName(0), FakeRParens(0),
         StartsBinaryExpression(false), EndsBinaryExpression(false),
-        LastInChainOfCalls(false), PartOfMultiVariableDeclStmt(false),
-        IsForEachMacro(false), MatchingParen(NULL), Previous(NULL), Next(NULL),
+        OperatorIndex(0), LastOperator(false),
+        PartOfMultiVariableDeclStmt(false), IsForEachMacro(false),
+        MatchingParen(NULL), Previous(NULL), Next(NULL),
         Decision(FD_Unformatted), Finalized(false) {}
 
   /// \brief The \c Token.
@@ -239,8 +244,13 @@ struct FormatToken {
   /// \brief \c true if this token ends a binary expression.
   bool EndsBinaryExpression;
 
-  /// \brief Is this the last "." or "->" in a builder-type call?
-  bool LastInChainOfCalls;
+  /// \brief Is this is an operator (or "."/"->") in a sequence of operators
+  /// with the same precedence, contains the 0-based operator index.
+  unsigned OperatorIndex;
+
+  /// \brief Is this the last operator (or "."/"->") in a sequence of operators
+  /// with the same precedence?
+  bool LastOperator;
 
   /// \brief Is this token part of a \c DeclStmt defining multiple variables?
   ///
