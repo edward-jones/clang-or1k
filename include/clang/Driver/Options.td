@@ -1368,6 +1368,8 @@ def mcompat_delay : Flag<["-"], "mcompat-delay">, Group<m_or1k_Features_Group>;
 def mdelay : Flag<["-"], "mdelay">, Group<m_or1k_Features_Group>;
 def mhard_div : Flag<["-"], "mhard-div">, Group<m_Group>;
 def mhard_mul : Flag<["-"], "mhard-mul">, Group<m_Group>;
+def mmul64 : Flag<["-"], "mmul64">, Group<m_or1k_Features_Group>;
+def mno_mul64 : Flag<["-"], "mno-mul64">, Group<m_or1k_Features_Group>;
 def mno_cmov : Flag<["-"], "mno-cmov">, Group<m_or1k_Features_Group>;
 def mno_delay : Flag<["-"], "mno-delay">, Group<m_or1k_Features_Group>;
 def mno_ror : Flag<["-"], "mno-ror">, Group<m_or1k_Features_Group>;

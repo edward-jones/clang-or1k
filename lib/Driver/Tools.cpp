@@ -1268,6 +1268,14 @@ static void getOR1KTargetFeatures(const llvm::Triple &Triple,
       Features.push_back("-mul");
   }
 
+  if (Arg *A = Args.getLastArg(options::OPT_mmul64,
+                               options::OPT_mno_mul64)) {
+    if (A->getOption().matches(options::OPT_mmul64))
+      Features.push_back("+mul64");
+    else
+      Features.push_back("-mul64");
+  }
+
   if (Arg *A = Args.getLastArg(options::OPT_mcmov,
                                options::OPT_mno_cmov)) {
     if (A->getOption().matches(options::OPT_mcmov))

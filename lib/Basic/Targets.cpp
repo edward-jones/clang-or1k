@@ -1680,6 +1680,7 @@ private:
   CPUKind CPU;
   ABIKind ABI;
   bool HasMul;
+  bool HasMul64;
   bool HasDiv;
   bool HasRor;
   bool HasCmov;
@@ -1725,6 +1726,7 @@ void OR1KTargetInfo::getDefaultFeatures(llvm::StringMap<bool> &Features) const {
 bool OR1KTargetInfo::hasFeature(llvm::StringRef Name) const {
   return llvm::StringSwitch<bool>(Name)
           .Case("mul", HasMul)
+          .Case("mul64", HasMul64)
           .Case("div", HasDiv)
           .Case("ror", HasRor)
           .Case("cmov", HasCmov)
@@ -1739,9 +1741,9 @@ bool OR1KTargetInfo::hasFeature(llvm::StringRef Name) const {
 
 void OR1KTargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
                                        StringRef Name, bool Enabled) const {
-  if (Name == "mul" || Name == "div" || Name == "ror" || Name == "cmov" ||
-      Name == "mac" || Name == "ext" || Name == "sfii" || Name == "fbit" ||
-      Name == "no-delay" || Name == "compat-delay")
+  if (Name == "mul" || Name == "mul64" || Name == "div" || Name == "ror" ||
+      Name == "cmov" || Name == "mac" || Name == "ext" || Name == "sfii" ||
+      Name == "fbit" || Name == "no-delay" || Name == "compat-delay")
     Features[Name] = Enabled;
 }
 
@@ -1756,6 +1758,10 @@ bool OR1KTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
 
     if (Name == "mul") {
       HasMul = Enabled;
+      continue;
+    }
+    if (Name == "mul64") {
+      HasMul64 = Enabled;
       continue;
     }
     if (Name == "div") {
