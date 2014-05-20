@@ -29,7 +29,7 @@ namespace format {
 // Returns the length of everything up to the first possible line break after
 // the ), ], } or > matching \c Tok.
 static unsigned getLengthToMatchingParen(const FormatToken &Tok) {
-  if (Tok.MatchingParen == NULL)
+  if (!Tok.MatchingParen)
     return 0;
   FormatToken *End = Tok.MatchingParen;
   while (End->Next && !End->Next->CanBreakBefore) {
@@ -98,8 +98,8 @@ bool ContinuationIndenter::canBreak(const LineState &State) {
   // The opening "{" of a braced list has to be on the same line as the first
   // element if it is nested in another braced init list or function call.
   if (!Current.MustBreakBefore && Previous.is(tok::l_brace) &&
-      Previous.Type != TT_DictLiteral &&
-      Previous.BlockKind == BK_BracedInit && Previous.Previous &&
+      Previous.Type != TT_DictLiteral && Previous.BlockKind == BK_BracedInit &&
+      Previous.Previous &&
       Previous.Previous->isOneOf(tok::l_brace, tok::l_paren, tok::comma))
     return false;
   // This prevents breaks like:
@@ -220,7 +220,7 @@ unsigned ContinuationIndenter::addTokenToState(LineState &State, bool Newline,
 
   assert(!State.Stack.empty());
   if ((Current.Type == TT_ImplicitStringLiteral &&
-       (Current.Previous->Tok.getIdentifierInfo() == NULL ||
+       (Current.Previous->Tok.getIdentifierInfo() == nullptr ||
         Current.Previous->Tok.getIdentifierInfo()->getPPKeywordID() ==
             tok::pp_not_keyword))) {
     // FIXME: Is this correct?
@@ -427,8 +427,7 @@ unsigned ContinuationIndenter::addTokenOnNewLine(LineState &State,
       !PreviousNonComment->isOneOf(tok::comma, tok::semi) &&
       PreviousNonComment->Type != TT_TemplateCloser &&
       PreviousNonComment->Type != TT_BinaryOperator &&
-      Current.Type != TT_BinaryOperator &&
-      !PreviousNonComment->opensScope())
+      Current.Type != TT_BinaryOperator && !PreviousNonComment->opensScope())
     State.Stack.back().BreakBeforeParameter = true;
 
   // If we break after { or the [ of an array initializer, we should also break
@@ -462,8 +461,7 @@ unsigned ContinuationIndenter::getNewLineColumn(const LineState &State) {
   const FormatToken *NextNonComment = Previous.getNextNonComment();
   if (!NextNonComment)
     NextNonComment = &Current;
-  if (NextNonComment->is(tok::l_brace) &&
-      NextNonComment->BlockKind == BK_Block)
+  if (NextNonComment->is(tok::l_brace) && NextNonComment->BlockKind == BK_Block)
     return Current.NestingLevel == 0 ? State.FirstIndent
                                      : State.Stack.back().Indent;
   if (Current.isOneOf(tok::r_brace, tok::r_square)) {
@@ -741,7 +739,7 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
                            Current.PackingKind == PPK_Inconclusive)));
       // If this '[' opens an ObjC call, determine whether all parameters fit
       // into one line and put one per line if they don't.
-      if (Current.Type == TT_ObjCMethodExpr &&
+      if (Current.Type == TT_ObjCMethodExpr && Style.ColumnLimit != 0 &&
           getLengthToMatchingParen(Current) + State.Column >
               getColumnLimit(State))
         BreakBeforeParameter = true;
@@ -832,8 +830,7 @@ unsigned ContinuationIndenter::addMultilineToken(const FormatToken &Current,
   return 0;
 }
 
-static bool getRawStringLiteralPrefixPostfix(StringRef Text,
-                                             StringRef &Prefix,
+static bool getRawStringLiteralPrefixPostfix(StringRef Text, StringRef &Prefix,
                                              StringRef &Postfix) {
   if (Text.startswith(Prefix = "R\"") || Text.startswith(Prefix = "uR\"") ||
       Text.startswith(Prefix = "UR\"") || Text.startswith(Prefix = "u8R\"") ||
@@ -916,7 +913,7 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
         Current, State.Line->Level, StartColumn, Current.OriginalColumn,
         !Current.Previous, State.Line->InPPDirective, Encoding, Style));
   } else if (Current.Type == TT_LineComment &&
-             (Current.Previous == NULL ||
+             (Current.Previous == nullptr ||
               Current.Previous->Type != TT_ImplicitStringLiteral)) {
     if (CommentPragmasRegex.match(Current.TokenText.substr(2)))
       return 0;
