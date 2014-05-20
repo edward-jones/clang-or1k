@@ -1581,6 +1581,7 @@ public:
     CK_None,
     CK_Generic,
     CK_OR1200,
+    CK_PULP
   };
 
   enum ABIKind {
@@ -1638,6 +1639,7 @@ public:
     CPU = llvm::StringSwitch<CPUKind>(Name)
            .Case("generic", CK_Generic)
            .Case("or1200", CK_OR1200)
+           .Case("pulp", CK_PULP)
            .Default(CK_None);
     
     return CPU != CK_None;
@@ -1720,6 +1722,12 @@ void OR1KTargetInfo::getDefaultFeatures(llvm::StringMap<bool> &Features) const {
     Features["ror"] = true;
     Features["ext"] = true;
     Features["sfii"] = true;
+  } else if (CPU == CK_PULP) {
+    Features["mul"] = true;
+    Features["ror"] = true;
+    Features["ext"] = true;
+    Features["sfii"] = true;
+    Features["cmov"] = true;
   }
 }
 
