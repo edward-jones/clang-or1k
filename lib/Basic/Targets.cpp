@@ -1808,7 +1808,8 @@ bool OR1KTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
     llvm_unreachable(0);
   }
 
-  assert(!(HasNoDelay && HasCompatDelay) && "Can't have both -mno-delay and -mcompat-delay");
+  assert(!(HasNoDelay && HasCompatDelay) &&
+         "Can't have both -mno-delay and -mcompat-delay");
 
   // Append ABI target feature for the backend.
   Features.push_back(ABI == AK_NewABI ? "+abi-new" : "-abi-new");
