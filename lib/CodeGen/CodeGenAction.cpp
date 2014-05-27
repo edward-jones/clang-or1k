@@ -11,6 +11,7 @@
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/DeclGroup.h"
+#include "clang/AST/DeclCXX.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
@@ -102,6 +103,19 @@ namespace clang {
         LLVMIRGeneration.stopTimer();
 
       return true;
+    }
+
+    void HandleInlineMethodDefinition(CXXMethodDecl *D) override {
+      PrettyStackTraceDecl CrashInfo(D, SourceLocation(),
+                                     Context->getSourceManager(),
+                                     "LLVM IR generation of inline method");
+      if (llvm::TimePassesIsEnabled)
+        LLVMIRGeneration.startTimer();
+
+      Gen->HandleInlineMethodDefinition(D);
+
+      if (llvm::TimePassesIsEnabled)
+        LLVMIRGeneration.stopTimer();
     }
 
     void HandleTranslationUnit(ASTContext &C) override {
@@ -466,7 +480,7 @@ void BackendConsumer::DiagnosticHandlerImpl(const DiagnosticInfo &DI) {
 #undef ComputeDiagID
 
 CodeGenAction::CodeGenAction(unsigned _Act, LLVMContext *_VMContext)
-  : Act(_Act), LinkModule(0),
+  : Act(_Act), LinkModule(nullptr),
     VMContext(_VMContext ? _VMContext : new LLVMContext),
     OwnsVMContext(!_VMContext) {}
 
@@ -509,7 +523,7 @@ static raw_ostream *GetOutputStream(CompilerInstance &CI,
   case Backend_EmitBC:
     return CI.createDefaultOutputFile(true, InFile, "bc");
   case Backend_EmitNothing:
-    return 0;
+    return nullptr;
   case Backend_EmitMCNull:
   case Backend_EmitObj:
     return CI.createDefaultOutputFile(true, InFile, "o");
@@ -523,7 +537,7 @@ ASTConsumer *CodeGenAction::CreateASTConsumer(CompilerInstance &CI,
   BackendAction BA = static_cast<BackendAction>(Act);
   std::unique_ptr<raw_ostream> OS(GetOutputStream(CI, InFile, BA));
   if (BA != Backend_EmitNothing && !OS)
-    return 0;
+    return nullptr;
 
   llvm::Module *LinkModuleToUse = LinkModule;
 
@@ -538,7 +552,7 @@ ASTConsumer *CodeGenAction::CreateASTConsumer(CompilerInstance &CI,
     if (!BCBuf) {
       CI.getDiagnostics().Report(diag::err_cannot_open_file)
         << LinkBCFile << ErrorStr;
-      return 0;
+      return nullptr;
     }
 
     ErrorOr<llvm::Module *> ModuleOrErr =
@@ -546,14 +560,17 @@ ASTConsumer *CodeGenAction::CreateASTConsumer(CompilerInstance &CI,
     if (error_code EC = ModuleOrErr.getError()) {
       CI.getDiagnostics().Report(diag::err_cannot_open_file)
         << LinkBCFile << EC.message();
-      return 0;
+      return nullptr;
     }
     LinkModuleToUse = ModuleOrErr.get();
   }
 
+  StringRef MainFileName = getCompilerInstance().getCodeGenOpts().MainFileName;
+  if (MainFileName.empty())
+    MainFileName = InFile;
   BEConsumer = new BackendConsumer(BA, CI.getDiagnostics(), CI.getCodeGenOpts(),
                                    CI.getTargetOpts(), CI.getLangOpts(),
-                                   CI.getFrontendOpts().ShowTimers, InFile,
+                                   CI.getFrontendOpts().ShowTimers, MainFileName,
                                    LinkModuleToUse, OS.release(), *VMContext);
   return BEConsumer;
 }

@@ -1,8 +1,8 @@
 // RUN: %clang_cc1 -triple x86_64-linux-gnu -S -emit-llvm %s -o - | FileCheck %s
-// RUN: %clang_cc1 -triple aarch64-linux-gnu -S -emit-llvm %s -o - | FileCheck %s
 // RUN: %clang_cc1 -triple arm64-linux-gnu -S -emit-llvm %s -o - | FileCheck %s
 // RUN: %clang_cc1 -triple armv7-linux-gnu -S -emit-llvm %s -o - | FileCheck %s
 
+// CHECK-NOT: @sp = common global
 register unsigned long current_stack_pointer asm("sp");
 
 // CHECK: define{{.*}} i[[bits:[0-9]+]] @get_stack_pointer_addr()
