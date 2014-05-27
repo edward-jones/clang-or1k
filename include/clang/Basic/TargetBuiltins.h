@@ -82,6 +82,15 @@ namespace clang {
     };
   }
 
+  /// \brief OR1K builtins
+  namespace OR1K {
+    enum {
+        LastTIBuiltin = clang::Builtin::FirstTSBuiltin-1,
+#define BUILTIN(ID, TYPE, ATTRS) BI##ID,
+#include "clang/Basic/BuiltinsOR1K.def"
+        LastTSBuiltin
+    };
+  }
 
   /// \brief X86 builtins
   namespace X86 {

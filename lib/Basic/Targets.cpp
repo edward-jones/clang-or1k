@@ -1617,9 +1617,8 @@ public:
 
   void getTargetBuiltins(const Builtin::Info *&Records,
                          unsigned &NumRecords) const override {
-    // FIXME: Implement.
-    Records = 0;
-    NumRecords = 0;
+    Records = BuiltinInfo;
+    NumRecords = clang::OR1K::LastTSBuiltin-Builtin::FirstTSBuiltin;
   }
 
   void getTargetDefines(const LangOptions &Opts,
@@ -1705,6 +1704,7 @@ private:
   bool HasCompatDelay;
 
   static const char * const GCCRegNames[];
+  static const Builtin::Info BuiltinInfo[];
 };
 
 /// OR1KTargetInfo::getTargetDefines - Return a set of the OR1K-specific
@@ -1827,6 +1827,13 @@ bool OR1KTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
   
   return true;
 }
+
+const Builtin::Info OR1KTargetInfo::BuiltinInfo[] = {
+#define BUILTIN(ID, TYPE, ATTRS) { #ID, TYPE, ATTRS, 0, ALL_LANGUAGES },
+#define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) { #ID, TYPE, ATTRS, HEADER,\
+                                              ALL_LANGUAGES },
+#include "clang/Basic/BuiltinsOR1K.def"
+};
 
 const char * const OR1KTargetInfo::GCCRegNames[] = {
   "r0",   "r1",   "r2",   "r3",   "r4",   "r5",   "r6",   "r7",
