@@ -2035,7 +2035,7 @@ def err_attribute_aligned_not_power_of_two : Error<
 def err_attribute_aligned_too_great : Error<
   "requested alignment must be %0 bytes or smaller">;
 def warn_redeclaration_without_attribute_prev_attribute_ignored : Warning<
-  "%0 redeclared without %1 attribute: previous %1 ignored">;
+  "%q0 redeclared without %1 attribute: previous %1 ignored">;
 def warn_attribute_ignored : Warning<"%0 attribute ignored">,
   InGroup<IgnoredAttributes>;
 def warn_attribute_after_definition_ignored : Warning<
@@ -4656,8 +4656,6 @@ def ext_deprecated_string_literal_conversion : ExtWarn<
 def err_realimag_invalid_type : Error<"invalid type %0 to %1 operator">;
 def err_typecheck_sclass_fscope : Error<
   "illegal storage class on file-scoped variable">;
-def err_unsupported_global_register : Error<
-  "global register variables are not supported">;
 def warn_standalone_specifier : Warning<"'%0' ignored on this declaration">,
   InGroup<MissingDeclarations>;
 def ext_standalone_specifier : ExtWarn<"'%0' is not permitted on a declaration "
@@ -6403,6 +6401,9 @@ def note_ref_subobject_of_member_declared_here : Note<
 // Array comparisons have similar warnings
 def warn_comparison_always : Warning<
   "%select{self-|array }0comparison always evaluates to %select{false|true|a constant}1">,
+  InGroup<TautologicalCompare>;
+def warn_comparison_bitwise_always : Warning<
+  "bitwise comparison always evaluates to %select{false|true}0">,
   InGroup<TautologicalCompare>;
 def warn_tautological_overlap_comparison : Warning<
   "overlapping comparisons always evaluate to %select{false|true}0">,
