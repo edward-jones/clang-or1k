@@ -1850,7 +1850,7 @@ void OR1KTargetInfo::getGCCRegNames(const char * const *&Names,
 
 void OR1KTargetInfo::getGCCRegAliases(const GCCRegAlias *&Aliases,
                                       unsigned &NumAliases) const {
-  Aliases = 0;
+  Aliases = nullptr;
   NumAliases = 0;
 }
 } // end anonymous namespace.
