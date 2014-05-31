@@ -1738,6 +1738,7 @@ void OR1KTargetInfo::getDefaultFeatures(llvm::StringMap<bool> &Features) const {
     Features["ror"] = true;
     Features["ext"] = true;
     Features["sfii"] = true;
+    Features["fbit"] = true;
     Features["cmov"] = true;
   }
 }
