@@ -1586,7 +1586,7 @@ public:
 
 namespace {
 // OR1K abstract base class
-class OR1KTargetInfo : public TargetInfo {
+class OR1KTargetInfoBase : public TargetInfo {
 public: 
   enum CPUKind {
     CK_None,
@@ -1601,8 +1601,7 @@ public:
     AK_NewABI
   };
 
-public:
-  OR1KTargetInfo(const llvm::Triple &triple)
+  OR1KTargetInfoBase(const llvm::Triple &triple)
    : TargetInfo(triple), CPU(CK_Generic), ABI(AK_DefaultABI),
      HasMul(false), HasDiv(false), HasRor(false), HasCmov(false), HasMAC(false),
      HasExt(false), HasSFII(false), HasFBit(false), HasNoDelay(false),
@@ -1611,7 +1610,6 @@ public:
     DoubleAlign = 32;
     LongDoubleAlign = 32;
     SuitableAlign = 32;
-    DescriptionString = "E-m:e-p:32:32-i64:32-f64:32-v64:32-v128:32-a:0:32-n32";
     UserLabelPrefix = "";
   }
 
@@ -1709,12 +1707,8 @@ private:
 
 /// OR1KTargetInfo::getTargetDefines - Return a set of the OR1K-specific
 /// #defines that are not tied to a specific subtarget.
-void OR1KTargetInfo::getTargetDefines(const LangOptions &Opts,
-                                      MacroBuilder &Builder) const {
-  // Target identification.
-  Builder.defineMacro("__or1k__");
-  Builder.defineMacro("__OR1K__");
-
+void OR1KTargetInfoBase::getTargetDefines(const LangOptions &Opts,
+                                          MacroBuilder &Builder) const {
   // Subtarget options.
   Builder.defineMacro("__REGISTER_PREFIX__", "");
 
@@ -1727,7 +1721,7 @@ void OR1KTargetInfo::getTargetDefines(const LangOptions &Opts,
   }
 }
 
-void OR1KTargetInfo::getDefaultFeatures(llvm::StringMap<bool> &Features) const {
+void OR1KTargetInfoBase::getDefaultFeatures(llvm::StringMap<bool> &Features) const {
   if (CPU == CK_OR1200) {
     Features["mul"] = true;
     Features["ror"] = true;
@@ -1743,7 +1737,7 @@ void OR1KTargetInfo::getDefaultFeatures(llvm::StringMap<bool> &Features) const {
   }
 }
 
-bool OR1KTargetInfo::hasFeature(llvm::StringRef Name) const {
+bool OR1KTargetInfoBase::hasFeature(llvm::StringRef Name) const {
   return llvm::StringSwitch<bool>(Name)
           .Case("mul", HasMul)
           .Case("mul64", HasMul64)
@@ -1759,7 +1753,7 @@ bool OR1KTargetInfo::hasFeature(llvm::StringRef Name) const {
           .Default(false);
 }
 
-void OR1KTargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
+void OR1KTargetInfoBase::setFeatureEnabled(llvm::StringMap<bool> &Features,
                                        StringRef Name, bool Enabled) const {
   if (Name == "mul" || Name == "mul64" || Name == "div" || Name == "ror" ||
       Name == "cmov" || Name == "mac" || Name == "ext" || Name == "sfii" ||
@@ -1767,7 +1761,7 @@ void OR1KTargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
     Features[Name] = Enabled;
 }
 
-bool OR1KTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
+bool OR1KTargetInfoBase::handleTargetFeatures(std::vector<std::string> &Features,
                                           DiagnosticsEngine &Diags) {
   for (std::string &Elem : Features) {
     StringRef Name(Elem);
@@ -1829,31 +1823,62 @@ bool OR1KTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
   return true;
 }
 
-const Builtin::Info OR1KTargetInfo::BuiltinInfo[] = {
+const Builtin::Info OR1KTargetInfoBase::BuiltinInfo[] = {
 #define BUILTIN(ID, TYPE, ATTRS) { #ID, TYPE, ATTRS, 0, ALL_LANGUAGES },
 #define LIBBUILTIN(ID, TYPE, ATTRS, HEADER) { #ID, TYPE, ATTRS, HEADER,\
                                               ALL_LANGUAGES },
 #include "clang/Basic/BuiltinsOR1K.def"
 };
 
-const char * const OR1KTargetInfo::GCCRegNames[] = {
+const char * const OR1KTargetInfoBase::GCCRegNames[] = {
   "r0",   "r1",   "r2",   "r3",   "r4",   "r5",   "r6",   "r7",
   "r8",   "r9",   "r10",  "r11",  "r12",  "r13",  "r14",  "r15",
   "r16",  "r17",  "r18",  "r19",  "r20",  "r21",  "r22",  "r23",
   "r24",  "r25",  "r26",  "r27",  "r28",  "r29",  "r30",  "r31"
 };
 
-void OR1KTargetInfo::getGCCRegNames(const char * const *&Names,
+void OR1KTargetInfoBase::getGCCRegNames(const char * const *&Names,
                                     unsigned &NumNames) const {
   Names = GCCRegNames;
   NumNames = llvm::array_lengthof(GCCRegNames);
 }
 
-void OR1KTargetInfo::getGCCRegAliases(const GCCRegAlias *&Aliases,
+void OR1KTargetInfoBase::getGCCRegAliases(const GCCRegAlias *&Aliases,
                                       unsigned &NumAliases) const {
   Aliases = nullptr;
   NumAliases = 0;
 }
+
+
+class OR1KTargetInfo : public OR1KTargetInfoBase {
+public:
+  OR1KTargetInfo(const llvm::Triple &triple) : OR1KTargetInfoBase(triple) {
+    DescriptionString = "E-m:e-p:32:32-i64:32-f64:32-v64:32-v128:32-a:0:32-n32";
+  }
+
+  void getTargetDefines(const LangOptions &Opts, MacroBuilder &Builder) const {
+    // Target identification.
+    Builder.defineMacro("__or1k__");
+    Builder.defineMacro("__OR1K__");
+
+    OR1KTargetInfoBase::getTargetDefines(Opts, Builder);
+  }
+};
+
+class OR1KleTargetInfo : public OR1KTargetInfoBase {
+public:
+  OR1KleTargetInfo(const llvm::Triple &triple) : OR1KTargetInfoBase(triple) {
+    DescriptionString = "e-m:e-p:32:32-i64:32-f64:32-v64:32-v128:32-a:0:32-n32";
+  }
+
+  void getTargetDefines(const LangOptions &Opts, MacroBuilder &Builder) const {
+    // Target identification.
+    Builder.defineMacro("__or1kle__");
+    Builder.defineMacro("__OR1KLE__");
+
+    OR1KTargetInfoBase::getTargetDefines(Opts, Builder);
+  }
+};
 } // end anonymous namespace.
 
 namespace {
@@ -6424,6 +6449,14 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple) {
       return new LinuxTargetInfo<OR1KTargetInfo>(Triple);
     default:
       return new OR1KTargetInfo(Triple);
+    }
+
+  case llvm::Triple::or1kle:
+    switch (os) {
+    case llvm::Triple::Linux:
+      return new LinuxTargetInfo<OR1KleTargetInfo>(Triple);
+    default:
+      return new OR1KleTargetInfo(Triple);
     }
 
   case llvm::Triple::sparc:

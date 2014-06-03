@@ -1521,8 +1521,10 @@ static std::string getCPUName(const ArgList &Args, const llvm::Triple &T) {
 
   case llvm::Triple::r600:
     return getR600TargetGPU(Args);
-    
+
+  // OR1K-FIXME: little endian
   case llvm::Triple::or1k:
+  case llvm::Triple::or1kle:
     return getOR1KTargetCPU(Args);
   }
 }
@@ -1729,6 +1731,7 @@ static void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
     getX86TargetFeatures(Triple, Args, Features);
     break;
   case llvm::Triple::or1k:
+  case llvm::Triple::or1kle:
     getOR1KTargetFeatures(Triple, Args, Features);
     break;
   }
@@ -2957,6 +2960,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     break;
 
   case llvm::Triple::or1k:
+  case llvm::Triple::or1kle:
     AddOR1KTargetArgs(Args, CmdArgs);
     break;
   }
@@ -6651,6 +6655,7 @@ void netbsd::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
     addAssemblerKPIC(Args, CmdArgs);
     break;
   }
+  // OR1K-FIXME: little endian
 
   case llvm::Triple::sparc:
     CmdArgs.push_back("-32");
@@ -6969,6 +6974,8 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString("-march=" + CPUName));
   }
 
+  // OR1K-FIXME: little endian
+
   if (NeedsKPIC)
     addAssemblerKPIC(Args, CmdArgs);
 
@@ -7191,6 +7198,8 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("elf64_s390");
   else
     CmdArgs.push_back("elf_x86_64");
+
+  // OR1K-FIXME: little endian
 
   if (Args.hasArg(options::OPT_static)) {
     if (ToolChain.getArch() == llvm::Triple::arm ||

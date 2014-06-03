@@ -2127,7 +2127,8 @@ bool Generic_GCC::IsIntegratedAssemblerDefault() const {
          getTriple().getArch() == llvm::Triple::armeb ||
          getTriple().getArch() == llvm::Triple::thumb ||
          getTriple().getArch() == llvm::Triple::thumbeb ||
-         getTriple().getArch() == llvm::Triple::or1k;
+         getTriple().getArch() == llvm::Triple::or1k ||
+         getTriple().getArch() == llvm::Triple::or1kle;
 }
 
 void Generic_ELF::addClangTargetOptions(const ArgList &DriverArgs,
