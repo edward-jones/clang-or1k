@@ -5796,6 +5796,123 @@ void solaris::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
 }
 
 
+void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
+                                  const InputInfo &Output,
+                                  const InputInfoList &Inputs,
+                                  const ArgList &Args,
+                                  const char *LinkingOutput) const {
+  ArgStringList CmdArgs;
+  const ToolChain &TC = getToolChain();
+  const Driver &D = TC.getDriver();
+  const bool IsPIE = !Args.hasArg(options::OPT_shared) &&
+    !Args.hasArg(options::OPT_static) &&
+    (Args.hasArg(options::OPT_pie) || TC.isPIEDefault());
+
+  // Silence warning for "clang -g foo.o -o foo"
+  Args.ClaimAllArgs(options::OPT_g_Group);
+  // and "clang -emit-llvm foo.o -o foo"
+  Args.ClaimAllArgs(options::OPT_emit_llvm);
+  // and for "clang -w foo.o -o foo". Other warning options are already
+  // handled somewhere else.
+  Args.ClaimAllArgs(options::OPT_w);
+
+  if (!D.SysRoot.empty())
+    CmdArgs.push_back(Args.MakeArgString("--sysroot=" + D.SysRoot));
+
+  if (IsPIE)
+    CmdArgs.push_back("-pie");
+
+  if (Args.hasArg(options::OPT_s))
+    CmdArgs.push_back("-s");
+
+  CmdArgs.push_back("-entry");
+  CmdArgs.push_back("0x100");
+
+  // Static vs dynamic management
+  if (Args.hasArg(options::OPT_static)) {
+    CmdArgs.push_back("-Bstatic");
+  } else {
+    if (Args.hasArg(options::OPT_rdynamic))
+      CmdArgs.push_back("-export-dynamic");
+    CmdArgs.push_back("--eh-frame-hdr");
+    CmdArgs.push_back("-Bdynamic");
+    if (Args.hasArg(options::OPT_shared)) {
+      CmdArgs.push_back("-shared");
+    } else {
+      CmdArgs.push_back("-dynamic-linker");
+      CmdArgs.push_back("eld");
+    }
+  }
+
+  if (Output.isFilename()) {
+    CmdArgs.push_back("-o");
+    CmdArgs.push_back(Output.getFilename());
+  } else {
+    assert(Output.isNothing() && "Invalid output.");
+  }
+
+  if (!Args.hasArg(options::OPT_nostdlib) &&
+      !Args.hasArg(options::OPT_nostartfiles)) {
+    if (!Args.hasArg(options::OPT_shared)) {
+      CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crt0.o")));
+
+      CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crtbegin.or1k.o")));
+    } else {
+      CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crtbeginS.or1k.o")));
+    }
+
+    CmdArgs.push_back(Args.MakeArgString("-L" + getCompilerRTLibDir(TC)));
+
+    llvm::SmallString<128> BinutilsLibPath(TC.GetFilePath("crt0.o"));
+    llvm::sys::path::remove_filename(BinutilsLibPath);
+    CmdArgs.push_back(Args.MakeArgString("-L" + BinutilsLibPath));
+  }
+
+  Args.AddAllArgs(CmdArgs, options::OPT_L);
+  Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
+  Args.AddAllArgs(CmdArgs, options::OPT_e);
+  Args.AddAllArgs(CmdArgs, options::OPT_s);
+  Args.AddAllArgs(CmdArgs, options::OPT_t);
+  Args.AddAllArgs(CmdArgs, options::OPT_Z_Flag);
+  Args.AddAllArgs(CmdArgs, options::OPT_r);
+
+  const ToolChain::path_list Paths = TC.getFilePaths();
+  for (ToolChain::path_list::const_iterator i = Paths.begin(), e = Paths.end();
+       i != e; ++i)
+    CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + *i));
+
+  if (D.IsUsingLTO(Args))
+    AddGoldPlugin(TC, Args, CmdArgs);
+
+  AddLinkerInputs(TC, Inputs, Args, CmdArgs);
+
+  // TODO: C++ standard library
+
+  if (!Args.hasArg(options::OPT_nostdlib)) {
+    CmdArgs.push_back("--start-group");
+    CmdArgs.push_back("-lclang_rt.or1k");
+    CmdArgs.push_back("-lc");
+    CmdArgs.push_back("-lor1k");
+    StringRef BoardName = Args.getLastArgValue(options::OPT_mboard_EQ,
+					       "or1ksim");
+    CmdArgs.push_back(Args.MakeArgString("-lboard-" + BoardName));
+    CmdArgs.push_back("--end-group");
+
+    if (!Args.hasArg(options::OPT_nostartfiles)) {
+      if (!Args.hasArg(options::OPT_shared)) {
+	CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crtend.or1k.o")));
+      } else {
+	CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crtendS.or1k.o")));
+      }
+    }
+  }
+
+  const char *Exec =
+    Args.MakeArgString(TC.GetProgramPath("ld"));
+  C.addCommand(new Command(JA, *this, Exec, CmdArgs));
+}
+
+
 void solaris::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                   const InputInfo &Output,
                                   const InputInfoList &Inputs,

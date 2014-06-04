@@ -2353,6 +2353,28 @@ StringRef Hexagon_TC::GetTargetCPU(const ArgList &Args)
 }
 // End Hexagon
 
+OR1K::OR1K(const Driver &D, const llvm::Triple& Triple,
+                           const ArgList &Args)
+  : ToolChain(D, Triple, Args) {
+
+  getProgramPaths().push_back(getDriver().getInstalledDir());
+  getProgramPaths().push_back(getDriver().SysRoot + "/bin");
+
+  // binutils lib search path
+  std::string LibDir = "/" + getDriver().DefaultTargetTriple + "/lib/";
+  getFilePaths().push_back(getDriver().getInstalledDir() + std::string("/..")
+			   + LibDir);
+  getFilePaths().push_back(getDriver().SysRoot + LibDir);
+
+  SmallString<128> CrtPath(getDriver().ResourceDir);
+  llvm::sys::path::append(CrtPath, "lib", "generic");
+  getFilePaths().push_back(CrtPath.c_str());
+}
+
+Tool *OR1K::buildLinker() const {
+  return new tools::or1k::Link(*this);
+}
+
 /// TCEToolChain - A tool chain using the llvm bitcode tools to perform
 /// all subcommands. See http://tce.cs.tut.fi for our peculiar target.
 /// Currently does not support anything else but compilation.

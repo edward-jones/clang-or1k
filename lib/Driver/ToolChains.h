@@ -701,6 +701,21 @@ public:
   static StringRef GetTargetCPU(const llvm::opt::ArgList &Args);
 };
 
+/// OR1K - Toolchain for OR1K, using ld directly
+class LLVM_LIBRARY_VISIBILITY OR1K : public ToolChain {
+public:
+  OR1K(const Driver &D, const llvm::Triple &Triple,
+               const llvm::opt::ArgList &Args);
+
+  bool IsIntegratedAssemblerDefault() const override { return true; }
+  bool isPICDefault() const override { return false; };
+  bool isPIEDefault() const override { return false; };
+  bool isPICDefaultForced() const override { return false; };
+
+protected:
+  Tool *buildLinker() const override;
+};
+
 /// TCEToolChain - A tool chain using the llvm bitcode tools to perform
 /// all subcommands. See http://tce.cs.tut.fi for our peculiar target.
 class LLVM_LIBRARY_VISIBILITY TCEToolChain : public ToolChain {
