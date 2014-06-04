@@ -2029,9 +2029,18 @@ static SmallString<128> getCompilerRTLibDir(const ToolChain &TC) {
   // The runtimes are located in the OS-specific resource directory.
   SmallString<128> Res(TC.getDriver().ResourceDir);
   const llvm::Triple &Triple = TC.getTriple();
-  // TC.getOS() yield "freebsd10.0" whereas "freebsd" is expected.
-  StringRef OSLibName = (Triple.getOS() == llvm::Triple::FreeBSD) ?
-    "freebsd" : TC.getOS();
+  StringRef OSLibName;
+  switch (Triple.getOS()) {
+  case llvm::Triple::FreeBSD:
+    // TC.getOS() yield "freebsd10.0" whereas "freebsd" is expected.
+    OSLibName = "freebsd";
+    break;
+  case llvm::Triple::UnknownOS:
+    OSLibName = "generic";
+    break;
+  default:
+    OSLibName = TC.getOS();
+  }
   llvm::sys::path::append(Res, "lib", OSLibName);
   return Res;
 }
