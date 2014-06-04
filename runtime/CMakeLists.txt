@@ -33,22 +33,29 @@ if(LLVM_BUILD_EXTERNAL_COMPILER_RT AND EXISTS ${COMPILER_RT_SRC_ROOT}/)
 
   # Add compiler-rt as an external project.
   set(COMPILER_RT_PREFIX ${CMAKE_BINARY_DIR}/projects/compiler-rt)
-  
+  set(COMPILER_RT_INSTALL_PREFIX ${CMAKE_BINARY_DIR}/projects/compiler-rt-install)
+
+  file(MAKE_DIRECTORY ${COMPILER_RT_INSTALL_PREFIX})
+
+  # FIXME: Generic is hardcoded, introduce an LLVM configuration variable?
   ExternalProject_Add(compiler-rt
-    PREFIX ${COMPILER_RT_PREFIX}
     SOURCE_DIR ${COMPILER_RT_SRC_ROOT}
     CMAKE_ARGS -DCMAKE_C_COMPILER=${LLVM_RUNTIME_OUTPUT_INTDIR}/clang
                -DCMAKE_CXX_COMPILER=${LLVM_RUNTIME_OUTPUT_INTDIR}/clang++
-               -DCMAKE_BUILD_TYPE=Release
+               -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+               -DCMAKE_SYSTEM_NAME=Generic
                -DLLVM_CONFIG_PATH=${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-config
                -DCOMPILER_RT_OUTPUT_DIR=${LLVM_LIBRARY_OUTPUT_INTDIR}/clang/${CLANG_VERSION}
                -DCOMPILER_RT_EXEC_OUTPUT_DIR=${LLVM_RUNTIME_OUTPUT_INTDIR}
-               -DCOMPILER_RT_INSTALL_PATH=lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}
+               -DCOMPILER_RT_INSTALL_PATH=${COMPILER_RT_INSTALL_PREFIX}
                -DCOMPILER_RT_INCLUDE_TESTS=${LLVM_INCLUDE_TESTS}
                -DCOMPILER_RT_ENABLE_WERROR=ON
-    INSTALL_COMMAND ""
-    STEP_TARGETS configure build
+    STEP_TARGETS configure build install
     )
+
+  install(DIRECTORY ${COMPILER_RT_INSTALL_PREFIX}/
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/)
+
   # Due to a bug, DEPENDS in ExternalProject_Add doesn't work
   # in CMake 2.8.9 and 2.8.10.
   add_dependencies(compiler-rt llvm-config clang)
