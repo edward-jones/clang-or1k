@@ -1,0 +1,30 @@
+//===-- BuiltinsOR1K.def - OR1K Builtin function database -------*- C++ -*-===//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file defines the OR1K-specific builtin function database.  Users of
+// this file must define the BUILTIN macro to make use of this information.
+//
+//===----------------------------------------------------------------------===//
+
+// The format of this database matches clang/Basic/Builtins.def.
+
+// Move from/to special register instructions
+BUILTIN(__builtin_or1k_mfspr, "ii", "")
+BUILTIN(__builtin_or1k_mtspr, "vii", "")
+
+// Hardware synchronization and OS interaction instructions.
+BUILTIN(__builtin_or1k_csync, "v", "")
+BUILTIN(__builtin_or1k_msync, "v", "")
+BUILTIN(__builtin_or1k_psync, "v", "")
+
+BUILTIN(__builtin_or1k_sys, "vi", "")
+BUILTIN(__builtin_or1k_trap, "vi", "")
+BUILTIN(__builtin_or1k_rfe, "v", "")
+
+#undef BUILTIN

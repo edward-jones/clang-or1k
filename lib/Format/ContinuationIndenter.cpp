@@ -420,9 +420,16 @@ unsigned ContinuationIndenter::addTokenOnNewLine(LineState &State,
 
   // Any break on this level means that the parent level has been broken
   // and we need to avoid bin packing there.
-  for (unsigned i = 0, e = State.Stack.size() - 1; i != e; ++i) {
-    State.Stack[i].BreakBeforeParameter = true;
+  bool JavaScriptFormat = Style.Language == FormatStyle::LK_JavaScript &&
+                          Current.is(tok::r_brace) &&
+                          State.Stack.size() > 1 &&
+                          State.Stack[State.Stack.size() - 2].JSFunctionInlined;
+  if (!JavaScriptFormat) {
+    for (unsigned i = 0, e = State.Stack.size() - 1; i != e; ++i) {
+      State.Stack[i].BreakBeforeParameter = true;
+    }
   }
+
   if (PreviousNonComment &&
       !PreviousNonComment->isOneOf(tok::comma, tok::semi) &&
       PreviousNonComment->Type != TT_TemplateCloser &&
@@ -437,11 +444,13 @@ unsigned ContinuationIndenter::addTokenOnNewLine(LineState &State,
 
   if (State.Stack.back().AvoidBinPacking) {
     // If we are breaking after '(', '{', '<', this is not bin packing
-    // unless AllowAllParametersOfDeclarationOnNextLine is false.
+    // unless AllowAllParametersOfDeclarationOnNextLine is false or this is a
+    // dict/object literal.
     if (!(Previous.isOneOf(tok::l_paren, tok::l_brace) ||
           Previous.Type == TT_BinaryOperator) ||
         (!Style.AllowAllParametersOfDeclarationOnNextLine &&
-         State.Line->MustBeDeclaration))
+         State.Line->MustBeDeclaration) ||
+        Previous.Type == TT_DictLiteral)
       State.Stack.back().BreakBeforeParameter = true;
   }
 
@@ -465,6 +474,9 @@ unsigned ContinuationIndenter::getNewLineColumn(const LineState &State) {
     return Current.NestingLevel == 0 ? State.FirstIndent
                                      : State.Stack.back().Indent;
   if (Current.isOneOf(tok::r_brace, tok::r_square)) {
+    if (State.Stack.size() > 1 &&
+        State.Stack[State.Stack.size() - 2].JSFunctionInlined)
+      return State.FirstIndent;
     if (Current.closesBlockTypeList(Style) ||
         (Current.MatchingParen &&
          Current.MatchingParen->BlockKind == BK_BracedInit))
@@ -547,8 +559,8 @@ unsigned ContinuationIndenter::getNewLineColumn(const LineState &State) {
 
 unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
                                                     bool DryRun, bool Newline) {
-  const FormatToken &Current = *State.NextToken;
   assert(State.Stack.size());
+  const FormatToken &Current = *State.NextToken;
 
   if (Current.Type == TT_InheritanceColon)
     State.Stack.back().AvoidBinPacking = true;
@@ -600,6 +612,65 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
 
   // Insert scopes created by fake parenthesis.
   const FormatToken *Previous = Current.getPreviousNonComment();
+
+  // Add special behavior to support a format commonly used for JavaScript
+  // closures:
+  //   SomeFunction(function() {
+  //     foo();
+  //     bar();
+  //   }, a, b, c);
+  if (Style.Language == FormatStyle::LK_JavaScript) {
+    if (Current.isNot(tok::comment) && Previous && Previous->is(tok::l_brace) &&
+        State.Stack.size() > 1) {
+      if (State.Stack[State.Stack.size() - 2].JSFunctionInlined && Newline) {
+        for (unsigned i = 0, e = State.Stack.size() - 1; i != e; ++i) {
+          State.Stack[i].NoLineBreak = true;
+        }
+      }
+      State.Stack[State.Stack.size() - 2].JSFunctionInlined = false;
+    }
+    if (Current.TokenText == "function")
+      State.Stack.back().JSFunctionInlined = !Newline;
+  }
+
+  moveStatePastFakeLParens(State, Newline);
+  moveStatePastScopeOpener(State, Newline);
+  moveStatePastScopeCloser(State);
+  moveStatePastFakeRParens(State);
+
+  if (Current.isStringLiteral() && State.StartOfStringLiteral == 0) {
+    State.StartOfStringLiteral = State.Column;
+  } else if (!Current.isOneOf(tok::comment, tok::identifier, tok::hash) &&
+             !Current.isStringLiteral()) {
+    State.StartOfStringLiteral = 0;
+  }
+
+  State.Column += Current.ColumnWidth;
+  State.NextToken = State.NextToken->Next;
+  unsigned Penalty = breakProtrudingToken(Current, State, DryRun);
+  if (State.Column > getColumnLimit(State)) {
+    unsigned ExcessCharacters = State.Column - getColumnLimit(State);
+    Penalty += Style.PenaltyExcessCharacter * ExcessCharacters;
+  }
+
+  if (Current.Role)
+    Current.Role->formatFromToken(State, this, DryRun);
+  // If the previous has a special role, let it consume tokens as appropriate.
+  // It is necessary to start at the previous token for the only implemented
+  // role (comma separated list). That way, the decision whether or not to break
+  // after the "{" is already done and both options are tried and evaluated.
+  // FIXME: This is ugly, find a better way.
+  if (Previous && Previous->Role)
+    Penalty += Previous->Role->formatAfterToken(State, this, DryRun);
+
+  return Penalty;
+}
+
+void ContinuationIndenter::moveStatePastFakeLParens(LineState &State,
+                                                    bool Newline) {
+  const FormatToken &Current = *State.NextToken;
+  const FormatToken *Previous = Current.getPreviousNonComment();
+
   // Don't add extra indentation for the first fake parenthesis after
   // 'return', assignments or opening <({[. The indentation for these cases
   // is special cased.
@@ -663,111 +734,10 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
     State.Stack.push_back(NewParenState);
     SkipFirstExtraIndent = false;
   }
+}
 
-  // If we encounter an opening (, [, { or <, we add a level to our stacks to
-  // prepare for the following tokens.
-  if (Current.opensScope()) {
-    unsigned NewIndent;
-    unsigned NewIndentLevel = State.Stack.back().IndentLevel;
-    bool AvoidBinPacking;
-    bool BreakBeforeParameter = false;
-    if (Current.is(tok::l_brace) ||
-        Current.Type == TT_ArrayInitializerLSquare) {
-      if (Current.MatchingParen && Current.BlockKind == BK_Block &&
-          State.Stack.back().LambdasFound <= 1) {
-        // If this is an l_brace starting a nested block, we pretend (wrt. to
-        // indentation) that we already consumed the corresponding r_brace.
-        // Thus, we remove all ParenStates caused by fake parentheses that end
-        // at the r_brace. The net effect of this is that we don't indent
-        // relative to the l_brace, if the nested block is the last parameter of
-        // a function. For example, this formats:
-        //
-        //   SomeFunction(a, [] {
-        //     f();  // break
-        //   });
-        //
-        // instead of:
-        //   SomeFunction(a, [] {
-        //                     f();  // break
-        //                   });
-        //
-        // If we have already found more than one lambda introducers on this
-        // level, we opt out of this because similarity between the lambdas is
-        // more important.
-        for (unsigned i = 0; i != Current.MatchingParen->FakeRParens; ++i) {
-          assert(State.Stack.size() > 1);
-          if (State.Stack.size() == 1) {
-            // Do not pop the last element.
-            break;
-          }
-          State.Stack.pop_back();
-        }
-        // For some reason, ObjC blocks are indented like continuations.
-        NewIndent =
-            State.Stack.back().LastSpace + (Current.Type == TT_ObjCBlockLBrace
-                                                ? Style.ContinuationIndentWidth
-                                                : Style.IndentWidth);
-        ++NewIndentLevel;
-        BreakBeforeParameter = true;
-      } else {
-        NewIndent = State.Stack.back().LastSpace;
-        if (Current.opensBlockTypeList(Style)) {
-          NewIndent += Style.IndentWidth;
-          NewIndent = std::min(State.Column + 2, NewIndent);
-          ++NewIndentLevel;
-        } else {
-          NewIndent += Style.ContinuationIndentWidth;
-          NewIndent = std::min(State.Column + 1, NewIndent);
-        }
-      }
-      const FormatToken *NextNoComment = Current.getNextNonComment();
-      AvoidBinPacking = Current.BlockKind == BK_Block ||
-                        Current.Type == TT_ArrayInitializerLSquare ||
-                        Current.Type == TT_DictLiteral ||
-                        Style.Language == FormatStyle::LK_Proto ||
-                        !Style.BinPackParameters ||
-                        (NextNoComment &&
-                         NextNoComment->Type == TT_DesignatedInitializerPeriod);
-    } else {
-      NewIndent = Style.ContinuationIndentWidth +
-                  std::max(State.Stack.back().LastSpace,
-                           State.Stack.back().StartOfFunctionCall);
-      AvoidBinPacking = !Style.BinPackParameters ||
-                        (Style.ExperimentalAutoDetectBinPacking &&
-                         (Current.PackingKind == PPK_OnePerLine ||
-                          (!BinPackInconclusiveFunctions &&
-                           Current.PackingKind == PPK_Inconclusive)));
-      // If this '[' opens an ObjC call, determine whether all parameters fit
-      // into one line and put one per line if they don't.
-      if (Current.Type == TT_ObjCMethodExpr && Style.ColumnLimit != 0 &&
-          getLengthToMatchingParen(Current) + State.Column >
-              getColumnLimit(State))
-        BreakBeforeParameter = true;
-    }
-
-    bool NoLineBreak = State.Stack.back().NoLineBreak ||
-                       (Current.Type == TT_TemplateOpener &&
-                        State.Stack.back().ContainsUnwrappedBuilder);
-    State.Stack.push_back(ParenState(NewIndent, NewIndentLevel,
-                                     State.Stack.back().LastSpace,
-                                     AvoidBinPacking, NoLineBreak));
-    State.Stack.back().BreakBeforeParameter = BreakBeforeParameter;
-  }
-
-  // If we encounter a closing ), ], } or >, we can remove a level from our
-  // stacks.
-  if (State.Stack.size() > 1 &&
-      (Current.isOneOf(tok::r_paren, tok::r_square) ||
-       (Current.is(tok::r_brace) && State.NextToken != State.Line->First) ||
-       State.NextToken->Type == TT_TemplateCloser)) {
-    State.Stack.pop_back();
-  }
-  if (Current.is(tok::r_square)) {
-    // If this ends the array subscript expr, reset the corresponding value.
-    const FormatToken *NextNonComment = Current.getNextNonComment();
-    if (NextNonComment && NextNonComment->isNot(tok::l_square))
-      State.Stack.back().StartOfArraySubscripts = 0;
-  }
+void ContinuationIndenter::moveStatePastFakeRParens(LineState &State) {
+  const FormatToken &Current = *State.NextToken;
 
   // Remove scopes created by fake parenthesis.
   if (Current.isNot(tok::r_brace) ||
@@ -785,33 +755,127 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
       State.Stack.back().VariablePos = VariablePos;
     }
   }
+}
 
-  if (Current.isStringLiteral() && State.StartOfStringLiteral == 0) {
-    State.StartOfStringLiteral = State.Column;
-  } else if (!Current.isOneOf(tok::comment, tok::identifier, tok::hash) &&
-             !Current.isStringLiteral()) {
-    State.StartOfStringLiteral = 0;
+void ContinuationIndenter::moveStatePastScopeOpener(LineState &State,
+                                                    bool Newline) {
+  const FormatToken &Current = *State.NextToken;
+  if (!Current.opensScope())
+    return;
+
+  if (Current.MatchingParen && Current.BlockKind == BK_Block) {
+    moveStateToNewBlock(State);
+    return;
   }
 
-  State.Column += Current.ColumnWidth;
-  State.NextToken = State.NextToken->Next;
-  unsigned Penalty = breakProtrudingToken(Current, State, DryRun);
-  if (State.Column > getColumnLimit(State)) {
-    unsigned ExcessCharacters = State.Column - getColumnLimit(State);
-    Penalty += Style.PenaltyExcessCharacter * ExcessCharacters;
+  unsigned NewIndent;
+  unsigned NewIndentLevel = State.Stack.back().IndentLevel;
+  bool AvoidBinPacking;
+  bool BreakBeforeParameter = false;
+  if (Current.is(tok::l_brace) || Current.Type == TT_ArrayInitializerLSquare) {
+    NewIndent = State.Stack.back().LastSpace;
+    if (Current.opensBlockTypeList(Style)) {
+      NewIndent += Style.IndentWidth;
+      NewIndent = std::min(State.Column + 2, NewIndent);
+      ++NewIndentLevel;
+    } else {
+      NewIndent += Style.ContinuationIndentWidth;
+      NewIndent = std::min(State.Column + 1, NewIndent);
+    }
+    const FormatToken *NextNoComment = Current.getNextNonComment();
+    AvoidBinPacking = Current.Type == TT_ArrayInitializerLSquare ||
+                      Current.Type == TT_DictLiteral ||
+                      Style.Language == FormatStyle::LK_Proto ||
+                      !Style.BinPackParameters ||
+                      (NextNoComment &&
+                       NextNoComment->Type == TT_DesignatedInitializerPeriod);
+  } else {
+    NewIndent = Style.ContinuationIndentWidth +
+                std::max(State.Stack.back().LastSpace,
+                         State.Stack.back().StartOfFunctionCall);
+    AvoidBinPacking = !Style.BinPackParameters ||
+                      (Style.ExperimentalAutoDetectBinPacking &&
+                       (Current.PackingKind == PPK_OnePerLine ||
+                        (!BinPackInconclusiveFunctions &&
+                         Current.PackingKind == PPK_Inconclusive)));
+    // If this '[' opens an ObjC call, determine whether all parameters fit
+    // into one line and put one per line if they don't.
+    if (Current.Type == TT_ObjCMethodExpr && Style.ColumnLimit != 0 &&
+        getLengthToMatchingParen(Current) + State.Column >
+            getColumnLimit(State))
+      BreakBeforeParameter = true;
+  }
+  bool NoLineBreak = State.Stack.back().NoLineBreak ||
+                     (Current.Type == TT_TemplateOpener &&
+                      State.Stack.back().ContainsUnwrappedBuilder);
+  State.Stack.push_back(ParenState(NewIndent, NewIndentLevel,
+                                   State.Stack.back().LastSpace,
+                                   AvoidBinPacking, NoLineBreak));
+  State.Stack.back().BreakBeforeParameter = BreakBeforeParameter;
+}
+
+void ContinuationIndenter::moveStatePastScopeCloser(LineState &State) {
+  const FormatToken &Current = *State.NextToken;
+  if (!Current.closesScope())
+    return;
+
+  // If we encounter a closing ), ], } or >, we can remove a level from our
+  // stacks.
+  if (State.Stack.size() > 1 &&
+      (Current.isOneOf(tok::r_paren, tok::r_square) ||
+       (Current.is(tok::r_brace) && State.NextToken != State.Line->First) ||
+       State.NextToken->Type == TT_TemplateCloser)) {
+    State.Stack.pop_back();
+  }
+  if (Current.is(tok::r_square)) {
+    // If this ends the array subscript expr, reset the corresponding value.
+    const FormatToken *NextNonComment = Current.getNextNonComment();
+    if (NextNonComment && NextNonComment->isNot(tok::l_square))
+      State.Stack.back().StartOfArraySubscripts = 0;
+  }
+}
+
+void ContinuationIndenter::moveStateToNewBlock(LineState &State) {
+  // If this is an l_brace starting a nested block, we pretend (wrt. to
+  // indentation) that we already consumed the corresponding r_brace. Thus, we
+  // remove all ParenStates caused by fake parentheses that end at the r_brace.
+  // The net effect of this is that we don't indent relative to the l_brace, if
+  // the nested block is the last parameter of a function. For example, this
+  // formats:
+  //
+  //   SomeFunction(a, [] {
+  //     f();  // break
+  //   });
+  //
+  // instead of:
+  //   SomeFunction(a, [] {
+  //                     f();  // break
+  //                   });
+  //
+  // If we have already found more than one lambda introducers on this level, we
+  // opt out of this because similarity between the lambdas is more important.
+  if (State.Stack.back().LambdasFound <= 1) {
+    for (unsigned i = 0; i != State.NextToken->MatchingParen->FakeRParens;
+         ++i) {
+      assert(State.Stack.size() > 1);
+      if (State.Stack.size() == 1) {
+        // Do not pop the last element.
+        break;
+      }
+      State.Stack.pop_back();
+    }
   }
 
-  if (Current.Role)
-    Current.Role->formatFromToken(State, this, DryRun);
-  // If the previous has a special role, let it consume tokens as appropriate.
-  // It is necessary to start at the previous token for the only implemented
-  // role (comma separated list). That way, the decision whether or not to break
-  // after the "{" is already done and both options are tried and evaluated.
-  // FIXME: This is ugly, find a better way.
-  if (Previous && Previous->Role)
-    Penalty += Previous->Role->formatAfterToken(State, this, DryRun);
-
-  return Penalty;
+  // For some reason, ObjC blocks are indented like continuations.
+  unsigned NewIndent = State.Stack.back().LastSpace +
+                       (State.NextToken->Type == TT_ObjCBlockLBrace
+                            ? Style.ContinuationIndentWidth
+                            : Style.IndentWidth);
+  State.Stack.push_back(ParenState(
+      NewIndent, /*NewIndentLevel=*/State.Stack.back().IndentLevel + 1,
+      State.Stack.back().LastSpace, /*AvoidBinPacking=*/true,
+      State.Stack.back().NoLineBreak));
+  State.Stack.back().BreakBeforeParameter = true;
 }
 
 unsigned ContinuationIndenter::addMultilineToken(const FormatToken &Current,
