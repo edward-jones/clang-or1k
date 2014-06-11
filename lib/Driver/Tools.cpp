@@ -5849,11 +5849,6 @@ void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crtbeginS.or1k.o")));
     }
 
-    CmdArgs.push_back(Args.MakeArgString("-L" + getCompilerRTLibDir(TC)));
-
-    llvm::SmallString<128> BinutilsLibPath(TC.GetFilePath("crt0.o"));
-    llvm::sys::path::remove_filename(BinutilsLibPath);
-    CmdArgs.push_back(Args.MakeArgString("-L" + BinutilsLibPath));
   }
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
