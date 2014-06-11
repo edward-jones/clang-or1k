@@ -113,3 +113,40 @@ if(LLVM_BUILD_EXTERNAL_COMPILER_RT AND EXISTS ${COMPILER_RT_SRC_ROOT}/)
     WORKING_DIRECTORY ${COMPILER_RT_BINARY_DIR}
     VERBATIM)
 endif()
+
+set(CRUNTIME_SRC_ROOT ${LLVM_MAIN_SRC_DIR}/projects/cruntime)
+if(EXISTS ${CRUNTIME_SRC_ROOT}/)
+  set(CRUNTIME_INSTALL_PREFIX ${CMAKE_BINARY_DIR}/projects/cruntime-install)
+  file(MAKE_DIRECTORY ${CRUNTIME_INSTALL_PREFIX})
+
+  # FIXME: Generic is hardcoded, introduce an LLVM configuration variable?
+  ExternalProject_Add(cruntime
+    SOURCE_DIR ${CRUNTIME_SRC_ROOT}/
+    CMAKE_ARGS -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+    -DLLVM_CONFIG_PATH=${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-config
+    -DCMAKE_INSTALL_PREFIX=${CRUNTIME_INSTALL_PREFIX}
+    -DCMAKE_SYSTEM_NAME=Generic
+    STEP_TARGETS configure build install
+    )
+
+  set(CRUNTIME_INSTALL_PATH /lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION})
+  install(DIRECTORY ${CRUNTIME_INSTALL_PREFIX}/
+    DESTINATION ${CMAKE_INSTALL_PREFIX}${CRUNTIME_INSTALL_PATH})
+
+  add_dependencies(cruntime llvm-config clang)
+
+  # Add a custom step to always re-configure cruntime (in case some of its
+  # sources have changed).
+  ExternalProject_Add_Step(cruntime force-reconfigure
+    DEPENDERS configure
+    ALWAYS 1
+    )
+
+  ExternalProject_Add_Step(cruntime clobber
+    COMMAND ${CMAKE_COMMAND} -E remove_directory <BINARY_DIR>
+    COMMAND ${CMAKE_COMMAND} -E make_directory <BINARY_DIR>
+    COMMENT "Clobberring cruntime build directory..."
+    DEPENDERS configure
+    DEPENDS ${LLVM_RUNTIME_OUTPUT_INTDIR}/clang
+    )
+endif()
