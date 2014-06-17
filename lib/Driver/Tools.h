@@ -507,6 +507,22 @@ namespace solaris {
   };
 } // end namespace solaris
 
+  /// OR1K -- Directly call the linker
+namespace or1k {
+  class LLVM_LIBRARY_VISIBILITY Link : public Tool  {
+  public:
+    Link(const ToolChain &TC) : Tool("or1k::Link", "linker", TC) {}
+
+    bool hasIntegratedCPP() const override { return false; }
+    bool isLinkJob() const override { return true; }
+
+    void ConstructJob(Compilation &C, const JobAction &JA,
+                      const InputInfo &Output, const InputInfoList &Inputs,
+                      const llvm::opt::ArgList &TCArgs,
+                      const char *LinkingOutput) const override;
+  };
+} // end namespace or1k
+
   /// auroraux -- Directly call GNU Binutils assembler and linker
 namespace auroraux {
   class LLVM_LIBRARY_VISIBILITY Assemble : public Tool  {
