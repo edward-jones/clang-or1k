@@ -5799,6 +5799,7 @@ void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
   const bool IsPIE = !Args.hasArg(options::OPT_shared) &&
     !Args.hasArg(options::OPT_static) &&
     (Args.hasArg(options::OPT_pie) || TC.isPIEDefault());
+  StringRef ArchName = getToolChain().getTriple().getArchName();
 
   // Silence warning for "clang -g foo.o -o foo"
   Args.ClaimAllArgs(options::OPT_g_Group);
@@ -5845,13 +5846,15 @@ void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nostartfiles)) {
+    llvm::SmallString<128> CrtBegin;
     if (!Args.hasArg(options::OPT_shared)) {
       CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crt0.o")));
 
-      CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crtbegin.or1k.o")));
+      ("crtbegin." + ArchName + ".o").toVector(CrtBegin);
     } else {
-      CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crtbeginS.or1k.o")));
+      ("crtbeginS." + ArchName + ".o").toVector(CrtBegin);
     }
+    CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath(CrtBegin.c_str())));
 
   }
 
@@ -5877,7 +5880,7 @@ void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib)) {
     CmdArgs.push_back("--start-group");
-    CmdArgs.push_back("-lclang_rt.or1k");
+    CmdArgs.push_back(Args.MakeArgString("-lclang_rt." + ArchName));
     CmdArgs.push_back("-lc");
     CmdArgs.push_back("-lor1k");
     StringRef BoardName = Args.getLastArgValue(options::OPT_mboard_EQ,
@@ -5886,11 +5889,13 @@ void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("--end-group");
 
     if (!Args.hasArg(options::OPT_nostartfiles)) {
+      llvm::SmallString<128> CrtEnd;
       if (!Args.hasArg(options::OPT_shared)) {
-	CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crtend.or1k.o")));
+	("crtend." + ArchName + ".o").toVector(CrtEnd);
       } else {
-	CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crtendS.or1k.o")));
+	("crtendS." + ArchName + ".o").toVector(CrtEnd);
       }
+      CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath(CrtEnd.c_str())));
     }
   }
 
