@@ -2003,7 +2003,8 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
         TC = new toolchains::XCore(*this, Target, Args);
         break;
       }
-      if (Target.getArch() == llvm::Triple::or1k) {
+      if (Target.getArch() == llvm::Triple::or1k ||
+	  Target.getArch() == llvm::Triple::or1kle) {
         TC = new toolchains::OR1K(*this, Target, Args);
         break;
       }
