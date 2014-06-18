@@ -6700,7 +6700,8 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
   case llvm::Triple::msp430:
     return *(TheTargetCodeGenInfo = new MSP430TargetCodeGenInfo(Types));
 
-  case llvm::Triple::or1k: {
+  case llvm::Triple::or1k:
+  case llvm::Triple::or1kle: {
     OR1KABIInfo::ABIKind ABI = OR1KABIInfo::parseABI(getTarget().getABI());
     return *(TheTargetCodeGenInfo = new OR1KTargetCodeGenInfo(Types, ABI));
   }
