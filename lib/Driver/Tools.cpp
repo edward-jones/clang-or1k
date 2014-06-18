@@ -63,10 +63,14 @@ static void addAssemblerKPIC(const ArgList &Args, ArgStringList &CmdArgs) {
 /// CheckPreprocessingOptions - Perform some validation of preprocessing
 /// arguments that is shared with gcc.
 static void CheckPreprocessingOptions(const Driver &D, const ArgList &Args) {
-  if (Arg *A = Args.getLastArg(options::OPT_C, options::OPT_CC))
-    if (!Args.hasArg(options::OPT_E) && !D.CCCIsCPP())
+  if (Arg *A = Args.getLastArg(options::OPT_C, options::OPT_CC)) {
+    if (!Args.hasArg(options::OPT_E) && !Args.hasArg(options::OPT__SLASH_P) &&
+        !Args.hasArg(options::OPT__SLASH_EP) && !D.CCCIsCPP()) {
       D.Diag(diag::err_drv_argument_only_allowed_with)
-        << A->getAsString(Args) << "-E";
+          << A->getBaseArg().getAsString(Args)
+          << (D.IsCLMode() ? "/E, /P or /EP" : "-E");
+    }
+  }
 }
 
 /// CheckCodeGenerationOptions - Perform some validation of code generation
@@ -173,10 +177,7 @@ static void AddLinkerInputs(const ToolChain &TC,
   // (constructed via -Xarch_).
   Args.AddAllArgValues(CmdArgs, options::OPT_Zlinker_input);
 
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
-
+  for (const auto &II : Inputs) {
     if (!TC.HasNativeLLVMSupport()) {
       // Don't try to pass LLVM inputs unless we have native support.
       if (II.getType() == types::TY_LLVM_IR ||
@@ -197,11 +198,11 @@ static void AddLinkerInputs(const ToolChain &TC,
     const Arg &A = II.getInputArg();
 
     // Handle reserved library options.
-    if (A.getOption().matches(options::OPT_Z_reserved_lib_stdcxx)) {
+    if (A.getOption().matches(options::OPT_Z_reserved_lib_stdcxx))
       TC.AddCXXStdlibLibArgs(Args, CmdArgs);
-    } else if (A.getOption().matches(options::OPT_Z_reserved_lib_cckext)) {
+    else if (A.getOption().matches(options::OPT_Z_reserved_lib_cckext))
       TC.AddCCKextLibArgs(Args, CmdArgs);
-    } else
+    else
       A.renderAsInput(Args, CmdArgs);
   }
 
@@ -896,6 +897,14 @@ void Clang::AddAArch64TargetArgs(const ArgList &Args,
   if (Args.hasArg(options::OPT_mstrict_align)) {
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-aarch64-strict-align");
+  }
+
+  // Setting -mno-global-merge disables the codegen global merge pass. Setting
+  // -mglobal-merge has no effect as the pass is enabled by default.
+  if (Arg *A = Args.getLastArg(options::OPT_mglobal_merge,
+                               options::OPT_mno_global_merge)) {
+    if (A->getOption().matches(options::OPT_mno_global_merge))
+      CmdArgs.push_back("-mno-global-merge");
   }
 }
 
@@ -1899,8 +1908,8 @@ static bool ContainsCompileAction(const Action *A) {
   if (isa<CompileJobAction>(A))
     return true;
 
-  for (Action::const_iterator it = A->begin(), ie = A->end(); it != ie; ++it)
-    if (ContainsCompileAction(*it))
+  for (const auto &Act : *A)
+    if (ContainsCompileAction(Act))
       return true;
 
   return false;
@@ -1916,9 +1925,8 @@ static bool UseRelaxAll(Compilation &C, const ArgList &Args) {
 
   if (RelaxDefault) {
     RelaxDefault = false;
-    for (ActionList::const_iterator it = C.getActions().begin(),
-           ie = C.getActions().end(); it != ie; ++it) {
-      if (ContainsCompileAction(*it)) {
+    for (const auto &Act : C.getActions()) {
+      if (ContainsCompileAction(Act)) {
         RelaxDefault = true;
         break;
       }
@@ -2181,17 +2189,23 @@ static void addLsanRT(const ToolChain &TC, const ArgList &Args,
 static void addUbsanRT(const ToolChain &TC, const ArgList &Args,
                        ArgStringList &CmdArgs, bool IsCXX,
                        bool HasOtherSanitizerRt) {
+  // Export symbols if we're not building a shared library. This allows two
+  // models: either every DSO containing ubsan-sanitized code contains the
+  // ubsan runtime, or the main executable does (or both).
+  const bool ExportSymbols = !Args.hasArg(options::OPT_shared);
+
   // Need a copy of sanitizer_common. This could come from another sanitizer
   // runtime; if we're not including one, include our own copy.
   if (!HasOtherSanitizerRt)
     addSanitizerRTLinkFlags(TC, Args, CmdArgs, "san", true, false);
 
-  addSanitizerRTLinkFlags(TC, Args, CmdArgs, "ubsan", false);
+  addSanitizerRTLinkFlags(TC, Args, CmdArgs, "ubsan", false, ExportSymbols);
 
   // Only include the bits of the runtime which need a C++ ABI library if
   // we're linking in C++ mode.
   if (IsCXX)
-    addSanitizerRTLinkFlags(TC, Args, CmdArgs, "ubsan_cxx", false);
+    addSanitizerRTLinkFlags(TC, Args, CmdArgs, "ubsan_cxx", false,
+                            ExportSymbols);
 }
 
 static void addDfsanRT(const ToolChain &TC, const ArgList &Args,
@@ -2659,6 +2673,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // LLVM Code Generator Options.
 
+  if (Arg *A = Args.getLastArg(options::OPT_Wframe_larger_than_EQ)) {
+    StringRef v = A->getValue();
+    CmdArgs.push_back("-mllvm");
+    CmdArgs.push_back(Args.MakeArgString("-warn-stack-size=" + v));
+    A->claim();
+  }
+
   if (Arg *A = Args.getLastArg(options::OPT_mregparm_EQ)) {
     CmdArgs.push_back("-mregparm");
     CmdArgs.push_back(A->getValue());
@@ -3025,8 +3046,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       // FIXME: we should support specifying dwarf version with
       // -gline-tables-only.
       CmdArgs.push_back("-gline-tables-only");
-      // Default is dwarf-2 for darwin.
-      if (getToolChain().getTriple().isOSDarwin())
+      // Default is dwarf-2 for Darwin, OpenBSD and FreeBSD.
+      const llvm::Triple &Triple = getToolChain().getTriple();
+      if (Triple.isOSDarwin() || Triple.getOS() == llvm::Triple::OpenBSD ||
+          Triple.getOS() == llvm::Triple::FreeBSD)
         CmdArgs.push_back("-gdwarf-2");
     } else if (A->getOption().matches(options::OPT_gdwarf_2))
       CmdArgs.push_back("-gdwarf-2");
@@ -3036,8 +3059,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-gdwarf-4");
     else if (!A->getOption().matches(options::OPT_g0) &&
              !A->getOption().matches(options::OPT_ggdb0)) {
-      // Default is dwarf-2 for darwin.
-      if (getToolChain().getTriple().isOSDarwin())
+      // Default is dwarf-2 for Darwin, OpenBSD and FreeBSD.
+      const llvm::Triple &Triple = getToolChain().getTriple();
+      if (Triple.isOSDarwin() || Triple.getOS() == llvm::Triple::OpenBSD ||
+          Triple.getOS() == llvm::Triple::FreeBSD)
         CmdArgs.push_back("-gdwarf-2");
       else
         CmdArgs.push_back("-g");
@@ -3609,6 +3634,17 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-arm-restrict-it");
   }
 
+  if (TT.getArch() == llvm::Triple::arm ||
+      TT.getArch() == llvm::Triple::thumb) {
+    if (Arg *A = Args.getLastArg(options::OPT_mlong_calls,
+                                 options::OPT_mno_long_calls)) {
+      if (A->getOption().matches(options::OPT_mlong_calls)) {
+        CmdArgs.push_back("-backend-option");
+        CmdArgs.push_back("-enable-arm-long-calls");
+      }
+    }
+  }
+
   // Forward -f options with positive and negative forms; we translate
   // these by hand.
   if (Arg *A = Args.getLastArg(options::OPT_fprofile_sample_use_EQ)) {
@@ -3620,6 +3656,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   if (Arg *A = Args.getLastArg(options::OPT_Rpass_EQ))
+    A->render(Args, CmdArgs);
+
+  if (Arg *A = Args.getLastArg(options::OPT_Rpass_missed_EQ))
+    A->render(Args, CmdArgs);
+
+  if (Arg *A = Args.getLastArg(options::OPT_Rpass_analysis_EQ))
     A->render(Args, CmdArgs);
 
   if (Args.hasArg(options::OPT_mkernel)) {
@@ -4040,9 +4082,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Support both clang's -f[no-]color-diagnostics and gcc's
   // -f[no-]diagnostics-colors[=never|always|auto].
   enum { Colors_On, Colors_Off, Colors_Auto } ShowColors = Colors_Auto;
-  for (ArgList::const_iterator it = Args.begin(), ie = Args.end();
-       it != ie; ++it) {
-    const Option &O = (*it)->getOption();
+  for (const auto &Arg : Args) {
+    const Option &O = Arg->getOption();
     if (!O.matches(options::OPT_fcolor_diagnostics) &&
         !O.matches(options::OPT_fdiagnostics_color) &&
         !O.matches(options::OPT_fno_color_diagnostics) &&
@@ -4050,7 +4091,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
         !O.matches(options::OPT_fdiagnostics_color_EQ))
       continue;
 
-    (*it)->claim();
+    Arg->claim();
     if (O.matches(options::OPT_fcolor_diagnostics) ||
         O.matches(options::OPT_fdiagnostics_color)) {
       ShowColors = Colors_On;
@@ -4059,7 +4100,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       ShowColors = Colors_Off;
     } else {
       assert(O.matches(options::OPT_fdiagnostics_color_EQ));
-      StringRef value((*it)->getValue());
+      StringRef value(Arg->getValue());
       if (value == "always")
         ShowColors = Colors_On;
       else if (value == "never")
@@ -4216,10 +4257,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     assert(Output.isNothing() && "Invalid output.");
   }
 
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
-
+  for (const auto &II : Inputs) {
     addDashXForInput(Args, II, CmdArgs);
 
     if (II.isFilename())
@@ -4236,9 +4274,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // analysis.
   if (getToolChain().UseDwarfDebugFlags()) {
     ArgStringList OriginalArgs;
-    for (ArgList::const_iterator it = Args.begin(),
-           ie = Args.end(); it != ie; ++it)
-      (*it)->render(Args, OriginalArgs);
+    for (const auto &Arg : Args)
+      Arg->render(Args, OriginalArgs);
 
     SmallString<256> Flags;
     Flags += Exec;
@@ -4487,6 +4524,12 @@ void Clang::AddClangCLArgs(const ArgList &Args, ArgStringList &CmdArgs) const {
   if (!Args.hasArg(options::OPT_frtti, options::OPT_fno_rtti))
     CmdArgs.push_back("-fno-rtti");
 
+  // /EP should expand to -E -P.
+  if (Args.hasArg(options::OPT__SLASH_EP)) {
+    CmdArgs.push_back("-E");
+    CmdArgs.push_back("-P");
+  }
+
   const Driver &D = getToolChain().getDriver();
   Arg *MostGeneralArg = Args.getLastArg(options::OPT__SLASH_vmg);
   Arg *BestCaseArg = Args.getLastArg(options::OPT__SLASH_vmb);
@@ -4613,9 +4656,8 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
   // analysis.
   if (getToolChain().UseDwarfDebugFlags()) {
     ArgStringList OriginalArgs;
-    for (ArgList::const_iterator it = Args.begin(),
-           ie = Args.end(); it != ie; ++it)
-      (*it)->render(Args, OriginalArgs);
+    for (const auto &Arg : Args)
+      Arg->render(Args, OriginalArgs);
 
     SmallString<256> Flags;
     const char *Exec = getToolChain().getDriver().getClangProgramPath();
@@ -4672,9 +4714,7 @@ void gcc::Common::ConstructJob(Compilation &C, const JobAction &JA,
   const Driver &D = getToolChain().getDriver();
   ArgStringList CmdArgs;
 
-  for (ArgList::const_iterator
-         it = Args.begin(), ie = Args.end(); it != ie; ++it) {
-    Arg *A = *it;
+  for (const auto &A : Args) {
     if (forwardToGCC(A->getOption())) {
       // Don't forward any -g arguments to assembly steps.
       if (isa<AssembleJobAction>(JA) &&
@@ -4743,10 +4783,7 @@ void gcc::Common::ConstructJob(Compilation &C, const JobAction &JA,
   //
   // FIXME: For the linker case specifically, can we safely convert
   // inputs into '-Wl,' options?
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
-
+  for (const auto &II : Inputs) {
     // Don't try to pass LLVM or AST inputs to a generic gcc.
     if (II.getType() == types::TY_LLVM_IR || II.getType() == types::TY_LTO_IR ||
         II.getType() == types::TY_LLVM_BC || II.getType() == types::TY_LTO_BC)
@@ -4865,10 +4902,7 @@ void hexagon::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   //
   // FIXME: For the linker case specifically, can we safely convert
   // inputs into '-Wl,' options?
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
-
+  for (const auto &II : Inputs) {
     // Don't try to pass LLVM or AST inputs to a generic gcc.
     if (II.getType() == types::TY_LLVM_IR || II.getType() == types::TY_LTO_IR ||
         II.getType() == types::TY_LLVM_BC || II.getType() == types::TY_LTO_BC)
@@ -4889,11 +4923,10 @@ void hexagon::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   const char *GCCName = "hexagon-as";
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath(GCCName));
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath(GCCName));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
-
 }
+
 void hexagon::Link::RenderExtraToolArgs(const JobAction &JA,
                                     ArgStringList &CmdArgs) const {
   // The types are (hopefully) good enough.
@@ -4935,10 +4968,8 @@ void hexagon::Link::ConstructJob(Compilation &C, const JobAction &JA,
   //----------------------------------------------------------------------------
   //
   //----------------------------------------------------------------------------
-  for (std::vector<std::string>::const_iterator i = ToolChain.ExtraOpts.begin(),
-         e = ToolChain.ExtraOpts.end();
-       i != e; ++i)
-    CmdArgs.push_back(i->c_str());
+  for (const auto &Opt : ToolChain.ExtraOpts)
+    CmdArgs.push_back(Opt.c_str());
 
   std::string MarchString = toolchains::Hexagon_TC::GetTargetCPU(Args);
   CmdArgs.push_back(Args.MakeArgString("-m" + MarchString));
@@ -5014,12 +5045,8 @@ void hexagon::Link::ConstructJob(Compilation &C, const JobAction &JA,
   // Library Search Paths
   //----------------------------------------------------------------------------
   const ToolChain::path_list &LibPaths = ToolChain.getFilePaths();
-  for (ToolChain::path_list::const_iterator
-         i = LibPaths.begin(),
-         e = LibPaths.end();
-       i != e;
-       ++i)
-    CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + *i));
+  for (const auto &LibPath : LibPaths)
+    CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + LibPath));
 
   //----------------------------------------------------------------------------
   //
@@ -5386,9 +5413,8 @@ bool darwin::Link::NeedsTempPath(const InputInfoList &Inputs) const {
   // We only need to generate a temp path for LTO if we aren't compiling object
   // files. When compiling source files, we run 'dsymutil' after linking. We
   // don't run 'dsymutil' when compiling object files.
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it)
-    if (it->getType() != types::TY_Object)
+  for (const auto &Input : Inputs)
+    if (Input.getType() != types::TY_Object)
       return true;
 
   return false;
@@ -5589,8 +5615,8 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
   /// Hack(tm) to ignore linking errors when we are doing ARC migration.
   if (Args.hasArg(options::OPT_ccc_arcmt_check,
                   options::OPT_ccc_arcmt_migrate)) {
-    for (ArgList::const_iterator I = Args.begin(), E = Args.end(); I != E; ++I)
-      (*I)->claim();
+    for (const auto &Arg : Args)
+      Arg->claim();
     const char *Exec =
       Args.MakeArgString(getToolChain().GetProgramPath("touch"));
     CmdArgs.push_back(Output.getFilename());
@@ -5708,14 +5734,12 @@ void darwin::Lipo::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-output");
   CmdArgs.push_back(Output.getFilename());
 
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
+  for (const auto &II : Inputs) {
     assert(II.isFilename() && "Unexpected lipo input.");
     CmdArgs.push_back(II.getFilename());
   }
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("lipo"));
+
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("lipo"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -5775,17 +5799,12 @@ void solaris::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
 
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
+  for (const auto &II : Inputs)
     CmdArgs.push_back(II.getFilename());
-  }
 
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("as"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("as"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
-
 
 void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                   const InputInfo &Output,
@@ -5902,7 +5921,6 @@ void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
     Args.MakeArgString(TC.GetProgramPath("ld"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
-
 
 void solaris::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                   const InputInfo &Output,
@@ -6022,14 +6040,10 @@ void auroraux::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
 
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
+  for (const auto &II : Inputs)
     CmdArgs.push_back(II.getFilename());
-  }
 
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("gas"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("gas"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -6183,11 +6197,8 @@ void openbsd::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
 
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
+  for (const auto &II : Inputs)
     CmdArgs.push_back(II.getFilename());
-  }
 
   const char *Exec =
     Args.MakeArgString(getToolChain().GetProgramPath("as"));
@@ -6339,14 +6350,10 @@ void bitrig::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
 
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
+  for (const auto &II : Inputs)
     CmdArgs.push_back(II.getFilename());
-  }
 
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("as"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("as"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -6540,14 +6547,10 @@ void freebsd::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
 
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
+  for (const auto &II : Inputs)
     CmdArgs.push_back(II.getFilename());
-  }
 
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("as"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("as"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -6648,9 +6651,8 @@ void freebsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
   const ToolChain::path_list Paths = ToolChain.getFilePaths();
-  for (ToolChain::path_list::const_iterator i = Paths.begin(), e = Paths.end();
-       i != e; ++i)
-    CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + *i));
+  for (const auto &Path : Paths)
+    CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + Path));
   Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
   Args.AddAllArgs(CmdArgs, options::OPT_e);
   Args.AddAllArgs(CmdArgs, options::OPT_s);
@@ -6802,11 +6804,8 @@ void netbsd::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
 
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
+  for (const auto &II : Inputs)
     CmdArgs.push_back(II.getFilename());
-  }
 
   const char *Exec = Args.MakeArgString((getToolChain().GetProgramPath("as")));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
@@ -7107,14 +7106,10 @@ void gnutools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
 
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
+  for (const auto &II : Inputs)
     CmdArgs.push_back(II.getFilename());
-  }
 
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("as"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("as"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 
   // Handle the debug info splitting at object creation time if we're
@@ -7264,10 +7259,8 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasArg(options::OPT_s))
     CmdArgs.push_back("-s");
 
-  for (std::vector<std::string>::const_iterator i = ToolChain.ExtraOpts.begin(),
-         e = ToolChain.ExtraOpts.end();
-       i != e; ++i)
-    CmdArgs.push_back(i->c_str());
+  for (const auto &Opt : ToolChain.ExtraOpts)
+    CmdArgs.push_back(Opt.c_str());
 
   if (!Args.hasArg(options::OPT_static)) {
     CmdArgs.push_back("--eh-frame-hdr");
@@ -7391,9 +7384,8 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   const ToolChain::path_list Paths = ToolChain.getFilePaths();
 
-  for (ToolChain::path_list::const_iterator i = Paths.begin(), e = Paths.end();
-       i != e; ++i)
-    CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + *i));
+  for (const auto &Path : Paths)
+    CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + Path));
 
   if (D.IsUsingLTO(Args))
     AddGoldPlugin(ToolChain, Args, CmdArgs);
@@ -7453,8 +7445,9 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
       }
       AddRunTimeLibs(ToolChain, D, CmdArgs, Args);
 
-      if (Args.hasArg(options::OPT_pthread) ||
-          Args.hasArg(options::OPT_pthreads) || UsedOpenMPLib != LibUnknown)
+      if ((Args.hasArg(options::OPT_pthread) ||
+           Args.hasArg(options::OPT_pthreads) || UsedOpenMPLib != LibUnknown) &&
+          !isAndroid)
         CmdArgs.push_back("-lpthread");
 
       CmdArgs.push_back("-lc");
@@ -7490,20 +7483,15 @@ void minix::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
                                    const char *LinkingOutput) const {
   ArgStringList CmdArgs;
 
-  Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA,
-                       options::OPT_Xassembler);
+  Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA, options::OPT_Xassembler);
 
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
 
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
+  for (const auto &II : Inputs)
     CmdArgs.push_back(II.getFilename());
-  }
 
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("as"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("as"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -7577,20 +7565,15 @@ void dragonfly::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   if (getToolChain().getArch() == llvm::Triple::x86)
     CmdArgs.push_back("--32");
 
-  Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA,
-                       options::OPT_Xassembler);
+  Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA, options::OPT_Xassembler);
 
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
 
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
+  for (const auto &II : Inputs)
     CmdArgs.push_back(II.getFilename());
-  }
 
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("as"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("as"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -7740,8 +7723,7 @@ void dragonfly::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   addProfileRT(getToolChain(), Args, CmdArgs);
 
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("ld"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("ld"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -7808,13 +7790,11 @@ void visualstudio::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgValues(CmdArgs, options::OPT__SLASH_link);
 
   // Add filenames immediately.
-  for (InputInfoList::const_iterator
-       it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    if (it->isFilename())
-      CmdArgs.push_back(it->getFilename());
+  for (const auto &Input : Inputs)
+    if (Input.isFilename())
+      CmdArgs.push_back(Input.getFilename());
     else
-      it->getInputArg().renderAsInput(Args, CmdArgs);
-  }
+      Input.getInputArg().renderAsInput(Args, CmdArgs);
 
   const char *Exec =
     Args.MakeArgString(getToolChain().GetProgramPath("link.exe"));
@@ -7914,8 +7894,8 @@ Command *visualstudio::Compile::GetCommand(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("/Z7");
 
   std::vector<std::string> Includes = Args.getAllArgValues(options::OPT_include);
-  for (size_t I = 0, E = Includes.size(); I != E; ++I)
-    CmdArgs.push_back(Args.MakeArgString(std::string("/FI") + Includes[I]));
+  for (const auto &Include : Includes)
+    CmdArgs.push_back(Args.MakeArgString(std::string("/FI") + Include));
 
   // Flags that can simply be passed through.
   Args.AddAllArgs(CmdArgs, options::OPT__SLASH_LD);
@@ -7945,7 +7925,6 @@ Command *visualstudio::Compile::GetCommand(Compilation &C, const JobAction &JA,
 
   const Driver &D = getToolChain().getDriver();
   std::string Exec = FindFallback("cl.exe", D.getClangProgramPath());
-
   return new Command(JA, *this, Args.MakeArgString(Exec), CmdArgs);
 }
 
@@ -7979,14 +7958,10 @@ void XCore::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA,
                        options::OPT_Xassembler);
 
-  for (InputInfoList::const_iterator
-       it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
+  for (const auto &II : Inputs)
     CmdArgs.push_back(II.getFilename());
-  }
 
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("xcc"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("xcc"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }
 
@@ -8013,7 +7988,6 @@ void XCore::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
-  const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("xcc"));
+  const char *Exec = Args.MakeArgString(getToolChain().GetProgramPath("xcc"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }

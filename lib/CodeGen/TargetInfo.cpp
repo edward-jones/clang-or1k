@@ -4999,7 +4999,7 @@ public:
                          CodeGenFunction &CGF) const override;
 
 public:
-  static ABIKind parseABI(const char *Name);
+  static ABIKind parseABI(StringRef Name);
 
 private:
   ABIKind ABI;
@@ -5121,8 +5121,8 @@ llvm::Value *OR1KABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
   return ResAddr;
 }
 
-OR1KABIInfo::ABIKind OR1KABIInfo::parseABI(const char *Name) {
-  if (!strcmp("new", Name))
+OR1KABIInfo::ABIKind OR1KABIInfo::parseABI(StringRef Name) {
+  if (Name == "new")
     return NewABI;
 
   return DefaultABI;
@@ -6514,7 +6514,8 @@ static bool appendPointerType(SmallStringEnc &Enc, const PointerType *PT,
 }
 
 /// Appends array encoding to Enc before calling appendType for the element.
-static bool appendArrayType(SmallStringEnc &Enc, const ArrayType *AT,
+static bool appendArrayType(SmallStringEnc &Enc, QualType QT,
+                            const ArrayType *AT,
                             const CodeGen::CodeGenModule &CGM,
                             TypeStringCache &TSC, StringRef NoSizeEnc) {
   if (AT->getSizeModifier() != ArrayType::Normal)
@@ -6525,6 +6526,8 @@ static bool appendArrayType(SmallStringEnc &Enc, const ArrayType *AT,
   else
     Enc += NoSizeEnc; // Global arrays use "*", otherwise it is "".
   Enc += ':';
+  // The Qualifiers should be attached to the type rather than the array.
+  appendQualifier(Enc, QT);
   if (!appendType(Enc, AT->getElementType(), CGM, TSC))
     return false;
   Enc += ')';
@@ -6573,13 +6576,15 @@ static bool appendType(SmallStringEnc &Enc, QualType QType,
 
   QualType QT = QType.getCanonicalType();
 
+  if (const ArrayType *AT = QT->getAsArrayTypeUnsafe())
+    // The Qualifiers should be attached to the type rather than the array.
+    // Thus we don't call appendQualifier() here.
+    return appendArrayType(Enc, QT, AT, CGM, TSC, "");
+
   appendQualifier(Enc, QT);
 
   if (const BuiltinType *BT = QT->getAs<BuiltinType>())
     return appendBuiltinType(Enc, BT);
-
-  if (const ArrayType *AT = QT->getAsArrayTypeUnsafe())
-    return appendArrayType(Enc, AT, CGM, TSC, "");
 
   if (const PointerType *PT = QT->getAs<PointerType>())
     return appendPointerType(Enc, PT, CGM, TSC);
@@ -6616,8 +6621,9 @@ static bool getTypeString(SmallStringEnc &Enc, const Decl *D,
     QualType QT = VD->getType().getCanonicalType();
     if (const ArrayType *AT = QT->getAsArrayTypeUnsafe()) {
       // Global ArrayTypes are given a size of '*' if the size is unknown.
-      appendQualifier(Enc, QT);
-      return appendArrayType(Enc, AT, CGM, TSC, "*");
+      // The Qualifiers should be attached to the type rather than the array.
+      // Thus we don't call appendQualifier() here.
+      return appendArrayType(Enc, QT, AT, CGM, TSC, "*");
     }
     return appendType(Enc, QT, CGM, TSC);
   }
@@ -6653,7 +6659,7 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
   case llvm::Triple::arm64:
   case llvm::Triple::arm64_be: {
     AArch64ABIInfo::ABIKind Kind = AArch64ABIInfo::AAPCS;
-    if (strcmp(getTarget().getABI(), "darwinpcs") == 0)
+    if (getTarget().getABI() == "darwinpcs")
       Kind = AArch64ABIInfo::DarwinPCS;
 
     return *(TheTargetCodeGenInfo = new AArch64TargetCodeGenInfo(Types, Kind));
@@ -6665,7 +6671,7 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
   case llvm::Triple::thumbeb:
     {
       ARMABIInfo::ABIKind Kind = ARMABIInfo::AAPCS;
-      if (strcmp(getTarget().getABI(), "apcs-gnu") == 0)
+      if (getTarget().getABI() == "apcs-gnu")
         Kind = ARMABIInfo::APCS;
       else if (CodeGenOpts.FloatABI == "hard" ||
                (CodeGenOpts.FloatABI != "soft" &&
@@ -6734,7 +6740,7 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
   }
 
   case llvm::Triple::x86_64: {
-    bool HasAVX = strcmp(getTarget().getABI(), "avx") == 0;
+    bool HasAVX = getTarget().getABI() == "avx";
 
     switch (Triple.getOS()) {
     case llvm::Triple::Win32:
