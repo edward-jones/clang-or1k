@@ -22,7 +22,8 @@ function(get_ext_project_build_command out_var target)
   endif()
 endfunction()
 
-set(COMPILER_RT_SRC_ROOT ${LLVM_MAIN_SRC_DIR}/projects/compiler-rt)
+set(COMPILER_RT_SRC_ROOT ${LLVM_MAIN_SRC_DIR}/projects/compiler-rt
+    CACHE PATH "Directory containing the source of compiler-rt")
 if(LLVM_BUILD_EXTERNAL_COMPILER_RT AND EXISTS ${COMPILER_RT_SRC_ROOT}/)
   if(CMAKE_GENERATOR MATCHES "Ninja")
     message(FATAL_ERROR
@@ -114,7 +115,8 @@ if(LLVM_BUILD_EXTERNAL_COMPILER_RT AND EXISTS ${COMPILER_RT_SRC_ROOT}/)
     VERBATIM)
 endif()
 
-set(CRUNTIME_SRC_ROOT ${LLVM_MAIN_SRC_DIR}/projects/cruntime)
+set(CRUNTIME_SRC_ROOT ${LLVM_MAIN_SRC_DIR}/projects/cruntime
+    CACHE PATH "Directory containing the source of cruntime")
 if(EXISTS ${CRUNTIME_SRC_ROOT}/)
   set(CRUNTIME_INSTALL_PREFIX ${CMAKE_BINARY_DIR}/projects/cruntime-install)
   file(MAKE_DIRECTORY ${CRUNTIME_INSTALL_PREFIX})
