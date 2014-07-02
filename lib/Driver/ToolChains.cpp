@@ -2364,14 +2364,15 @@ OR1K::OR1K(const Driver &D, const llvm::Triple& Triple,
                            const ArgList &Args)
   : ToolChain(D, Triple, Args) {
 
-  getProgramPaths().push_back(getDriver().getInstalledDir());
-  getProgramPaths().push_back(getDriver().SysRoot + "/bin");
+  SysRoot = getDriver().SysRoot.empty() ?
+    getDriver().getInstalledDir() + std::string("/..") :
+    getDriver().SysRoot;
+
+  getProgramPaths().push_back(SysRoot + "/bin");
 
   // binutils lib search path
-  std::string LibDir = "/" + getDriver().DefaultTargetTriple + "/lib/";
-  getFilePaths().push_back(getDriver().getInstalledDir() + std::string("/..")
-			   + LibDir);
-  getFilePaths().push_back(getDriver().SysRoot + LibDir);
+  getFilePaths().push_back(SysRoot + "/" + getDriver().DefaultTargetTriple +
+			   "/lib/");
 
   SmallString<128> CrtPath(getDriver().ResourceDir);
   llvm::sys::path::append(CrtPath, "lib", "generic");
@@ -2380,6 +2381,20 @@ OR1K::OR1K(const Driver &D, const llvm::Triple& Triple,
 
 Tool *OR1K::buildLinker() const {
   return new tools::or1k::Link(*this);
+}
+
+void OR1K::addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
+                                 llvm::opt::ArgStringList &CC1Args) const {
+  CC1Args.push_back("-nostdsysteminc");
+}
+
+void OR1K::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
+                                     ArgStringList &CC1Args) const {
+  if (DriverArgs.hasArg(options::OPT_nostdinc) ||
+      DriverArgs.hasArg(options::OPT_nostdlibinc))
+    return;
+  addSystemInclude(DriverArgs, CC1Args, SysRoot + "/" +
+		   getDriver().DefaultTargetTriple + "/include/");
 }
 
 /// TCEToolChain - A tool chain using the llvm bitcode tools to perform

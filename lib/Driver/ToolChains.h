@@ -711,9 +711,16 @@ public:
   bool isPICDefault() const override { return false; };
   bool isPIEDefault() const override { return false; };
   bool isPICDefaultForced() const override { return false; };
+  void
+  AddClangSystemIncludeArgs(const llvm::opt::ArgList &DriverArgs,
+                            llvm::opt::ArgStringList &CC1Args) const override;
+  void addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
+                             llvm::opt::ArgStringList &CC1Args) const override;
 
 protected:
   Tool *buildLinker() const override;
+private:
+  std::string SysRoot;
 };
 
 /// TCEToolChain - A tool chain using the llvm bitcode tools to perform
