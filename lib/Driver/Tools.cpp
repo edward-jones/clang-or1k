@@ -2252,6 +2252,8 @@ static bool shouldUseFramePointerForTarget(const ArgList &Args,
           return false;
     return true;
   case llvm::Triple::xcore:
+  case llvm::Triple::or1k:
+  case llvm::Triple::or1kle:
     return false;
   default:
     return true;
