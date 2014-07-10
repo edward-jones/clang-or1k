@@ -2372,6 +2372,48 @@ OR1K::OR1K(const Driver &D, const llvm::Triple& Triple,
   SmallString<128> CrtPath(getDriver().ResourceDir);
   llvm::sys::path::append(CrtPath, "lib", "generic");
   getFilePaths().push_back(CrtPath.c_str());
+
+  Multilib Default = Multilib()
+    .gccSuffix("/")
+    .osSuffix("/")
+    .includeSuffix("/");
+
+  Multilib NoDelay = Multilib()
+    .gccSuffix("/no-delay")
+    .osSuffix("/")
+    .includeSuffix("/")
+    .flag("+mno-delay");
+
+  Multilib CompatDelay = Multilib()
+    .gccSuffix("/compat-delay")
+    .osSuffix("/")
+    .includeSuffix("/")
+    .flag("+mcompat-delay");
+
+  Multilib SoftFloat = Multilib()
+    .gccSuffix("/soft-float")
+    .osSuffix("/")
+    .includeSuffix("/")
+    .flag("+msoft-float");
+
+  Multilib NoDelaySoftFloat = Multilib()
+    .gccSuffix("no-delay/soft-float")
+    .osSuffix("/")
+    .includeSuffix("/")
+    .flag("+mno-delay").flag("+msoft-float");
+
+  Multilib CompatDelaySoftFloat = Multilib()
+    .gccSuffix("compat-delay/soft-float")
+    .osSuffix("/")
+    .includeSuffix("/")
+    .flag("+mcompat-delay").flag("+msoft-float");
+
+  Multilibs.push_back(Default);
+  Multilibs.push_back(NoDelay);
+  Multilibs.push_back(CompatDelay);
+  Multilibs.push_back(SoftFloat);
+  Multilibs.push_back(NoDelaySoftFloat);
+  Multilibs.push_back(CompatDelaySoftFloat);
 }
 
 Tool *OR1K::buildLinker() const {
