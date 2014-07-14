@@ -29,6 +29,11 @@ namespace toolchains {
 }
 
 namespace tools {
+
+namespace visualstudio {
+  class Compile;
+}
+
 using llvm::opt::ArgStringList;
 
   /// \brief Clang compiler tool.
@@ -79,6 +84,10 @@ using llvm::opt::ArgStringList;
 
     void AddClangCLArgs(const llvm::opt::ArgList &Args,
                         llvm::opt::ArgStringList &CmdArgs) const;
+
+    visualstudio::Compile *getCLFallback() const;
+
+    mutable std::unique_ptr<visualstudio::Compile> CLFallback;
 
   public:
     Clang(const ToolChain &TC) : Tool("clang", "clang frontend", TC) {}
@@ -211,6 +220,7 @@ namespace arm {
 
 namespace mips {
   bool hasMipsAbiArg(const llvm::opt::ArgList &Args, const char *Value);
+  bool isNaN2008(const llvm::opt::ArgList &Args, const llvm::Triple &Triple);
 }
 
 namespace darwin {
@@ -580,7 +590,7 @@ namespace dragonfly {
   };
 } // end namespace dragonfly
 
-  /// Visual studio tools.
+/// Visual studio tools.
 namespace visualstudio {
   class LLVM_LIBRARY_VISIBILITY Link : public Tool {
   public:

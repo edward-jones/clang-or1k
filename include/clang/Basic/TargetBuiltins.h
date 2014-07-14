@@ -1,4 +1,4 @@
-//===--- TargetBuiltins.h - Target specific builtin IDs -------------------===//
+//===--- TargetBuiltins.h - Target specific builtin IDs ---------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -80,6 +80,16 @@ namespace clang {
 #include "clang/Basic/BuiltinsOR1K.def"
         LastTSBuiltin
     };
+  }
+
+  /// \brief R600 builtins
+  namespace R600 {
+  enum {
+    LastTIBuiltin = clang::Builtin::FirstTSBuiltin - 1,
+  #define BUILTIN(ID, TYPE, ATTRS) BI##ID,
+  #include "clang/Basic/BuiltinsR600.def"
+    LastTSBuiltin
+  };
   }
 
   /// \brief X86 builtins

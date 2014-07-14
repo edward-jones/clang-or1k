@@ -1580,7 +1580,9 @@ instructions for implementing atomic operations.
 .. code-block:: c
 
   T __builtin_arm_ldrex(const volatile T *addr);
+  T __builtin_arm_ldaex(const volatile T *addr);
   int __builtin_arm_strex(T val, volatile T *addr);
+  int __builtin_arm_stlex(T val, volatile T *addr);
   void __builtin_arm_clrex(void);
 
 The types ``T`` currently supported are:
@@ -1589,11 +1591,11 @@ The types ``T`` currently supported are:
 * Pointer types.
 
 Note that the compiler does not guarantee it will not insert stores which clear
-the exclusive monitor in between an ``ldrex`` and its paired ``strex``. In
-practice this is only usually a risk when the extra store is on the same cache
-line as the variable being modified and Clang will only insert stack stores on
-its own, so it is best not to use these operations on variables with automatic
-storage duration.
+the exclusive monitor in between an ``ldrex`` type operation and its paired
+``strex``. In practice this is only usually a risk when the extra store is on
+the same cache line as the variable being modified and Clang will only insert
+stack stores on its own, so it is best not to use these operations on variables
+with automatic storage duration.
 
 Also, loads and stores may be implicit in code written between the ``ldrex`` and
 ``strex``. Clang will not necessarily mitigate the effects of these either, so
@@ -1770,8 +1772,12 @@ Extensions for loop hint optimizations
 
 The ``#pragma clang loop`` directive is used to specify hints for optimizing the
 subsequent for, while, do-while, or c++11 range-based for loop. The directive
-provides options for vectorization and interleaving. Loop hints can be specified
-before any loop and will be ignored if the optimization is not safe to apply.
+provides options for vectorization, interleaving, and unrolling. Loop hints can
+be specified before any loop and will be ignored if the optimization is not safe
+to apply.
+
+Vectorization and Interleaving
+------------------------------
 
 A vectorized loop performs multiple iterations of the original loop
 in parallel using vector instructions. The instruction set of the target
@@ -1805,7 +1811,6 @@ width/count of the set of target architectures supported by your application.
 
 .. code-block:: c++
 
-
   #pragma clang loop vectorize_width(2)
   #pragma clang loop interleave_count(2)
   for(...) {
@@ -1814,6 +1819,46 @@ width/count of the set of target architectures supported by your application.
 
 Specifying a width/count of 1 disables the optimization, and is equivalent to
 ``vectorize(disable)`` or ``interleave(disable)``.
+
+Loop Unrolling
+--------------
+
+Unrolling a loop reduces the loop control overhead and exposes more
+opportunities for ILP. Loops can be fully or partially unrolled. Full unrolling
+eliminates the loop and replaces it with an enumerated sequence of loop
+iterations. Full unrolling is only possible if the loop trip count is known at
+compile time. Partial unrolling replicates the loop body within the loop and
+reduces the trip count.
+
+If ``unroll(enable)`` is specified the unroller will attempt to fully unroll the
+loop if the trip count is known at compile time. If the loop count is not known
+or the fully unrolled code size is greater than the limit specified by the
+`-pragma-unroll-threshold` command line option the loop will be partially
+unrolled subject to the same limit.
+
+.. code-block:: c++
+
+  #pragma clang loop unroll(enable)
+  for(...) {
+    ...
+  }
+
+The unroll count can be specified explicitly with ``unroll_count(_value_)`` where
+_value_ is a positive integer. If this value is greater than the trip count the
+loop will be fully unrolled. Otherwise the loop is partially unrolled subject
+to the `-pragma-unroll-threshold` limit.
+
+.. code-block:: c++
+
+  #pragma clang loop unroll_count(8)
+  for(...) {
+    ...
+  }
+
+Unrolling of a loop can be prevented by specifying ``unroll(disable)``.
+
+Additional Information
+----------------------
 
 For convenience multiple loop hints can be specified on a single line.
 

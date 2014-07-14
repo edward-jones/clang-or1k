@@ -1723,7 +1723,7 @@ bool Sema::LookupQualifiedName(LookupResult &R, DeclContext *LookupCtx,
                  != Context.getCanonicalType(PathElement.Base->getType())) {
       // We found members of the given name in two subobjects of
       // different types. If the declaration sets aren't the same, this
-      // this lookup is ambiguous.
+      // lookup is ambiguous.
       if (HasOnlyStaticMembers(Path->Decls.begin(), Path->Decls.end())) {
         CXXBasePaths::paths_iterator FirstPath = Paths.begin();
         DeclContext::lookup_iterator FirstD = FirstPath->Decls.begin();
@@ -4454,14 +4454,27 @@ bool CorrectionCandidateCallback::ValidateCandidate(const TypoCorrection &candid
     return WantTypeSpecifiers || WantExpressionKeywords || WantCXXNamedCasts ||
            WantRemainingKeywords || WantObjCSuper;
 
-  for (TypoCorrection::const_decl_iterator CDecl = candidate.begin(),
-                                           CDeclEnd = candidate.end();
-       CDecl != CDeclEnd; ++CDecl) {
-    if (!isa<TypeDecl>(*CDecl))
-      return true;
+  bool HasNonType = false;
+  bool HasStaticMethod = false;
+  bool HasNonStaticMethod = false;
+  for (Decl *D : candidate) {
+    if (FunctionTemplateDecl *FTD = dyn_cast<FunctionTemplateDecl>(D))
+      D = FTD->getTemplatedDecl();
+    if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(D)) {
+      if (Method->isStatic())
+        HasStaticMethod = true;
+      else
+        HasNonStaticMethod = true;
+    }
+    if (!isa<TypeDecl>(D))
+      HasNonType = true;
   }
 
-  return WantTypeSpecifiers;
+  if (IsAddressOfOperand && HasNonStaticMethod && !HasStaticMethod &&
+      !candidate.getCorrectionSpecifier())
+    return false;
+
+  return WantTypeSpecifiers || HasNonType;
 }
 
 FunctionCallFilterCCC::FunctionCallFilterCCC(Sema &SemaRef, unsigned NumArgs,

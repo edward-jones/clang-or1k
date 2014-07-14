@@ -573,6 +573,11 @@ void StmtPrinter::VisitSEHFinallyStmt(SEHFinallyStmt *Node) {
   OS << "\n";
 }
 
+void StmtPrinter::VisitSEHLeaveStmt(SEHLeaveStmt *Node) {
+  Indent() << "__leave;";
+  if (Policy.IncludeNewlines) OS << "\n";
+}
+
 //===----------------------------------------------------------------------===//
 //  OpenMP clauses printing methods
 //===----------------------------------------------------------------------===//
@@ -626,6 +631,24 @@ void OMPClausePrinter::VisitOMPProcBindClause(OMPProcBindClause *Node) {
   OS << "proc_bind("
      << getOpenMPSimpleClauseTypeName(OMPC_proc_bind, Node->getProcBindKind())
      << ")";
+}
+
+void OMPClausePrinter::VisitOMPScheduleClause(OMPScheduleClause *Node) {
+  OS << "schedule("
+     << getOpenMPSimpleClauseTypeName(OMPC_schedule, Node->getScheduleKind());
+  if (Node->getChunkSize()) {
+    OS << ", ";
+    Node->getChunkSize()->printPretty(OS, nullptr, Policy);
+  }
+  OS << ")";
+}
+
+void OMPClausePrinter::VisitOMPOrderedClause(OMPOrderedClause *) {
+  OS << "ordered";
+}
+
+void OMPClausePrinter::VisitOMPNowaitClause(OMPNowaitClause *) {
+  OS << "nowait";
 }
 
 template<typename T>
@@ -730,6 +753,14 @@ void OMPClausePrinter::VisitOMPCopyinClause(OMPCopyinClause *Node) {
   }
 }
 
+void OMPClausePrinter::VisitOMPCopyprivateClause(OMPCopyprivateClause *Node) {
+  if (!Node->varlist_empty()) {
+    OS << "copyprivate";
+    VisitOMPClauseList(Node, '(');
+    OS << ")";
+  }
+}
+
 }
 
 //===----------------------------------------------------------------------===//
@@ -766,6 +797,37 @@ void StmtPrinter::VisitOMPSimdDirective(OMPSimdDirective *Node) {
 
 void StmtPrinter::VisitOMPForDirective(OMPForDirective *Node) {
   Indent() << "#pragma omp for ";
+  PrintOMPExecutableDirective(Node);
+}
+
+void StmtPrinter::VisitOMPSectionsDirective(OMPSectionsDirective *Node) {
+  Indent() << "#pragma omp sections ";
+  PrintOMPExecutableDirective(Node);
+}
+
+void StmtPrinter::VisitOMPSectionDirective(OMPSectionDirective *Node) {
+  Indent() << "#pragma omp section";
+  PrintOMPExecutableDirective(Node);
+}
+
+void StmtPrinter::VisitOMPSingleDirective(OMPSingleDirective *Node) {
+  Indent() << "#pragma omp single ";
+  PrintOMPExecutableDirective(Node);
+}
+
+void StmtPrinter::VisitOMPParallelForDirective(OMPParallelForDirective *Node) {
+  Indent() << "#pragma omp parallel for ";
+  PrintOMPExecutableDirective(Node);
+}
+
+void StmtPrinter::VisitOMPParallelSectionsDirective(
+    OMPParallelSectionsDirective *Node) {
+  Indent() << "#pragma omp parallel sections ";
+  PrintOMPExecutableDirective(Node);
+}
+
+void StmtPrinter::VisitOMPTaskDirective(OMPTaskDirective *Node) {
+  Indent() << "#pragma omp task ";
   PrintOMPExecutableDirective(Node);
 }
 
@@ -926,11 +988,10 @@ void StmtPrinter::VisitIntegerLiteral(IntegerLiteral *Node) {
   // Emit suffixes.  Integer literals are always a builtin integer type.
   switch (Node->getType()->getAs<BuiltinType>()->getKind()) {
   default: llvm_unreachable("Unexpected type for integer literal!");
-  // FIXME: The Short and UShort cases are to handle cases where a short
-  // integeral literal is formed during template instantiation.  They should
-  // be removed when template instantiation no longer needs integer literals.
-  case BuiltinType::Short:
-  case BuiltinType::UShort:
+  case BuiltinType::SChar:     OS << "i8"; break;
+  case BuiltinType::UChar:     OS << "Ui8"; break;
+  case BuiltinType::Short:     OS << "i16"; break;
+  case BuiltinType::UShort:    OS << "Ui16"; break;
   case BuiltinType::Int:       break; // no suffix.
   case BuiltinType::UInt:      OS << 'U'; break;
   case BuiltinType::Long:      OS << 'L'; break;
@@ -1256,10 +1317,12 @@ void StmtPrinter::VisitDesignatedInitExpr(DesignatedInitExpr *Node) {
                       DEnd = Node->designators_end();
        D != DEnd; ++D) {
     if (D->isFieldDesignator()) {
-      if (D->getDotLoc().isInvalid())
-        OS << D->getFieldName()->getName() << ":";
-      else
+      if (D->getDotLoc().isInvalid()) {
+        if (IdentifierInfo *II = D->getFieldName())
+          OS << II->getName() << ":";
+      } else {
         OS << "." << D->getFieldName()->getName();
+      }
     } else {
       OS << "[";
       if (D->isArrayDesignator()) {

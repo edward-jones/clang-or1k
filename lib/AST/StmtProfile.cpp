@@ -214,6 +214,10 @@ void StmtProfiler::VisitSEHExceptStmt(const SEHExceptStmt *S) {
   VisitStmt(S);
 }
 
+void StmtProfiler::VisitSEHLeaveStmt(const SEHLeaveStmt *S) {
+  VisitStmt(S);
+}
+
 void StmtProfiler::VisitCapturedStmt(const CapturedStmt *S) {
   VisitStmt(S);
 }
@@ -288,6 +292,15 @@ void OMPClauseProfiler::VisitOMPDefaultClause(const OMPDefaultClause *C) { }
 
 void OMPClauseProfiler::VisitOMPProcBindClause(const OMPProcBindClause *C) { }
 
+void OMPClauseProfiler::VisitOMPScheduleClause(const OMPScheduleClause *C) {
+  if (C->getChunkSize())
+    Profiler->VisitStmt(C->getChunkSize());
+}
+
+void OMPClauseProfiler::VisitOMPOrderedClause(const OMPOrderedClause *) {}
+
+void OMPClauseProfiler::VisitOMPNowaitClause(const OMPNowaitClause *) {}
+
 template<typename T>
 void OMPClauseProfiler::VisitOMPClauseList(T *Node) {
   for (auto *I : Node->varlists())
@@ -326,6 +339,10 @@ void OMPClauseProfiler::VisitOMPAlignedClause(const OMPAlignedClause *C) {
 void OMPClauseProfiler::VisitOMPCopyinClause(const OMPCopyinClause *C) {
   VisitOMPClauseList(C);
 }
+void
+OMPClauseProfiler::VisitOMPCopyprivateClause(const OMPCopyprivateClause *C) {
+  VisitOMPClauseList(C);
+}
 }
 
 void
@@ -348,6 +365,32 @@ void StmtProfiler::VisitOMPSimdDirective(const OMPSimdDirective *S) {
 }
 
 void StmtProfiler::VisitOMPForDirective(const OMPForDirective *S) {
+  VisitOMPExecutableDirective(S);
+}
+
+void StmtProfiler::VisitOMPSectionsDirective(const OMPSectionsDirective *S) {
+  VisitOMPExecutableDirective(S);
+}
+
+void StmtProfiler::VisitOMPSectionDirective(const OMPSectionDirective *S) {
+  VisitOMPExecutableDirective(S);
+}
+
+void StmtProfiler::VisitOMPSingleDirective(const OMPSingleDirective *S) {
+  VisitOMPExecutableDirective(S);
+}
+
+void
+StmtProfiler::VisitOMPParallelForDirective(const OMPParallelForDirective *S) {
+  VisitOMPExecutableDirective(S);
+}
+
+void StmtProfiler::VisitOMPParallelSectionsDirective(
+    const OMPParallelSectionsDirective *S) {
+  VisitOMPExecutableDirective(S);
+}
+
+void StmtProfiler::VisitOMPTaskDirective(const OMPTaskDirective *S) {
   VisitOMPExecutableDirective(S);
 }
 

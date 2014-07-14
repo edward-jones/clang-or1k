@@ -699,6 +699,7 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
     case Stmt::FunctionParmPackExprClass:
     case Stmt::SEHTryStmtClass:
     case Stmt::SEHExceptStmtClass:
+    case Stmt::SEHLeaveStmtClass:
     case Stmt::LambdaExprClass:
     case Stmt::SEHFinallyStmtClass: {
       const ExplodedNode *node = Bldr.generateSink(S, Pred, Pred->getState());
@@ -733,6 +734,12 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
     case Stmt::OMPParallelDirectiveClass:
     case Stmt::OMPSimdDirectiveClass:
     case Stmt::OMPForDirectiveClass:
+    case Stmt::OMPSectionsDirectiveClass:
+    case Stmt::OMPSectionDirectiveClass:
+    case Stmt::OMPSingleDirectiveClass:
+    case Stmt::OMPParallelForDirectiveClass:
+    case Stmt::OMPParallelSectionsDirectiveClass:
+    case Stmt::OMPTaskDirectiveClass:
       llvm_unreachable("Stmt should not be in analyzer evaluation loop");
 
     case Stmt::ObjCSubscriptRefExprClass:
@@ -2253,9 +2260,8 @@ void ExprEngine::VisitGCCAsmStmt(const GCCAsmStmt *A, ExplodedNode *Pred,
 
   ProgramStateRef state = Pred->getState();
 
-  for (GCCAsmStmt::const_outputs_iterator OI = A->begin_outputs(),
-       OE = A->end_outputs(); OI != OE; ++OI) {
-    SVal X = state->getSVal(*OI, Pred->getLocationContext());
+  for (const Expr *O : A->outputs()) {
+    SVal X = state->getSVal(O, Pred->getLocationContext());
     assert (!X.getAs<NonLoc>());  // Should be an Lval, or unknown, undef.
 
     if (Optional<Loc> LV = X.getAs<Loc>())
@@ -2515,7 +2521,7 @@ struct DOTGraphTraits<ExplodedNode*> :
     }
 
     ProgramStateRef state = N->getState();
-    Out << "\\|StateID: " << (const void*) state.getPtr()
+    Out << "\\|StateID: " << (const void*) state.get()
         << " NodeID: " << (const void*) N << "\\|";
     state->printDOT(Out);
 

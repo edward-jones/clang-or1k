@@ -273,12 +273,25 @@ Retry:
     break;
   }
 
+  case tok::kw___if_exists:
+  case tok::kw___if_not_exists:
+    ProhibitAttributes(Attrs);
+    ParseMicrosoftIfExistsStatement(Stmts);
+    // An __if_exists block is like a compound statement, but it doesn't create
+    // a new scope.
+    return StmtEmpty();
+
   case tok::kw_try:                 // C++ 15: try-block
     return ParseCXXTryBlock();
 
   case tok::kw___try:
     ProhibitAttributes(Attrs); // TODO: is it correct?
     return ParseSEHTryBlock();
+
+  case tok::kw___leave:
+    Res = ParseSEHLeaveStatement();
+    SemiError = "__leave";
+    break;
 
   case tok::annot_pragma_vis:
     ProhibitAttributes(Attrs);
@@ -414,7 +427,8 @@ StmtResult Parser::ParseSEHTryBlockCommon(SourceLocation TryLoc) {
   if(Tok.isNot(tok::l_brace))
     return StmtError(Diag(Tok, diag::err_expected) << tok::l_brace);
 
-  StmtResult TryBlock(ParseCompoundStatement());
+  StmtResult TryBlock(ParseCompoundStatement(/*isStmtExpr=*/false,
+                      Scope::DeclScope | Scope::SEHTryScope));
   if(TryBlock.isInvalid())
     return TryBlock;
 
@@ -496,6 +510,16 @@ StmtResult Parser::ParseSEHFinallyBlock(SourceLocation FinallyBlock) {
     return Block;
 
   return Actions.ActOnSEHFinallyBlock(FinallyBlock,Block.get());
+}
+
+/// Handle __leave
+///
+/// seh-leave-statement:
+///   '__leave' ';'
+///
+StmtResult Parser::ParseSEHLeaveStatement() {
+  SourceLocation LeaveLoc = ConsumeToken();  // eat the '__leave'.
+  return Actions.ActOnSEHLeaveStmt(LeaveLoc, getCurScope());
 }
 
 /// ParseLabeledStatement - We have an identifier and a ':' after it.
@@ -911,12 +935,6 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   while (Tok.isNot(tok::r_brace) && !isEofOrEom()) {
     if (Tok.is(tok::annot_pragma_unused)) {
       HandlePragmaUnused();
-      continue;
-    }
-
-    if (getLangOpts().MicrosoftExt && (Tok.is(tok::kw___if_exists) ||
-        Tok.is(tok::kw___if_not_exists))) {
-      ParseMicrosoftIfExistsStatement(Stmts);
       continue;
     }
 
@@ -1388,6 +1406,25 @@ StmtResult Parser::ParseDoStatement() {
                              Cond.get(), T.getCloseLocation());
 }
 
+bool Parser::isForRangeIdentifier() {
+  assert(Tok.is(tok::identifier));
+
+  const Token &Next = NextToken();
+  if (Next.is(tok::colon))
+    return true;
+
+  if (Next.is(tok::l_square) || Next.is(tok::kw_alignas)) {
+    TentativeParsingAction PA(*this);
+    ConsumeToken();
+    SkipCXX11Attributes();
+    bool Result = Tok.is(tok::colon);
+    PA.Revert();
+    return Result;
+  }
+
+  return false;
+}
+
 /// ParseForStatement
 ///       for-statement: [C99 6.8.5.3]
 ///         'for' '(' expr[opt] ';' expr[opt] ';' expr[opt] ')' statement
@@ -1471,6 +1508,29 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     ProhibitAttributes(attrs);
     // no first part, eat the ';'.
     ConsumeToken();
+  } else if (getLangOpts().CPlusPlus && Tok.is(tok::identifier) &&
+             isForRangeIdentifier()) {
+    ProhibitAttributes(attrs);
+    IdentifierInfo *Name = Tok.getIdentifierInfo();
+    SourceLocation Loc = ConsumeToken();
+    MaybeParseCXX11Attributes(attrs);
+
+    ForRangeInit.ColonLoc = ConsumeToken();
+    if (Tok.is(tok::l_brace))
+      ForRangeInit.RangeExpr = ParseBraceInitializer();
+    else
+      ForRangeInit.RangeExpr = ParseExpression();
+
+    Diag(Loc, getLangOpts().CPlusPlus1z
+                  ? diag::warn_cxx1y_compat_for_range_identifier
+                  : diag::ext_for_range_identifier)
+      << ((getLangOpts().CPlusPlus11 && !getLangOpts().CPlusPlus1z)
+              ? FixItHint::CreateInsertion(Loc, "auto &&")
+              : FixItHint());
+
+    FirstPart = Actions.ActOnCXXForRangeIdentifier(getCurScope(), Loc, Name,
+                                                   attrs, attrs.Range.getEnd());
+    ForRange = true;
   } else if (isForInitDeclaration()) {  // for (int X = 4;
     // Parse declaration, which eats the ';'.
     if (!C99orCXXorObjC)   // Use of C99-style for loops in C90 mode?

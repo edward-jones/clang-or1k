@@ -664,8 +664,7 @@ void ASTDeclReader::VisitFunctionDecl(FunctionDecl *FD) {
       // We avoid getASTContext because a decl in the parent hierarchy may
       // be initializing.
       llvm::FoldingSetNodeID ID;
-      FunctionTemplateSpecializationInfo::Profile(ID, TemplArgs.data(),
-                                                  TemplArgs.size(), C);
+      FunctionTemplateSpecializationInfo::Profile(ID, TemplArgs, C);
       void *InsertPos = nullptr;
       FunctionTemplateDecl::Common *CommonPtr = CanonTemplate->getCommonPtr();
       CommonPtr->Specializations.FindNodeOrInsertPos(ID, InsertPos);
@@ -1018,7 +1017,8 @@ ASTDeclReader::RedeclarableResult ASTDeclReader::VisitVarDeclImpl(VarDecl *VD) {
   switch ((VarKind)Record[Idx++]) {
   case VarNotTemplate:
     // Only true variables (not parameters or implicit parameters) can be merged
-    if (VD->getKind() != Decl::ParmVar && VD->getKind() != Decl::ImplicitParam)
+    if (VD->getKind() != Decl::ParmVar && VD->getKind() != Decl::ImplicitParam &&
+        !isa<VarTemplateSpecializationDecl>(VD))
       mergeRedeclarable(VD, Redecl);
     break;
   case VarTemplate:
@@ -1439,7 +1439,9 @@ ASTDeclReader::VisitCXXRecordDeclImpl(CXXRecordDecl *D) {
   };
   switch ((CXXRecKind)Record[Idx++]) {
   case CXXRecNotTemplate:
-    mergeRedeclarable(D, Redecl);
+    // Merged when we merge the folding set entry in the primary template.
+    if (!isa<ClassTemplateSpecializationDecl>(D))
+      mergeRedeclarable(D, Redecl);
     break;
   case CXXRecTemplate: {
     // Merged when we merge the template.
@@ -1480,6 +1482,9 @@ ASTDeclReader::VisitCXXRecordDeclImpl(CXXRecordDecl *D) {
   if (WasDefinition) {
     DeclID KeyFn = ReadDeclID(Record, Idx);
     if (KeyFn && D->IsCompleteDefinition)
+      // FIXME: This is wrong for the ARM ABI, where some other module may have
+      // made this function no longer be a key function. We need an update
+      // record or similar for that case.
       C.KeyFunctions[D] = KeyFn;
   }
 
@@ -1753,11 +1758,11 @@ ASTDeclReader::VisitClassTemplateSpecializationDeclImpl(
             Reader.MergedDeclContexts.insert(
                 std::make_pair(D, CanonDD->Definition));
             D->IsCompleteDefinition = false;
-            D->DefinitionData = CanonSpec->DefinitionData;
           } else {
             CanonSpec->DefinitionData = D->DefinitionData;
           }
         }
+        D->DefinitionData = CanonSpec->DefinitionData;
       }
     }
   }
@@ -2032,10 +2037,27 @@ void ASTDeclReader::mergeTemplatePattern(RedeclarableTemplateDecl *D,
   auto *DPattern = D->getTemplatedDecl();
   auto *ExistingPattern = Existing->getTemplatedDecl();
   RedeclarableResult Result(Reader, DsID, DPattern->getKind());
-  if (auto *DClass = dyn_cast<CXXRecordDecl>(DPattern))
-    // FIXME: Merge definitions here, if both declarations had definitions.
+  if (auto *DClass = dyn_cast<CXXRecordDecl>(DPattern)) {
+    // Merge with any existing definition.
+    // FIXME: This is duplicated in several places. Refactor.
+    auto *ExistingClass =
+        cast<CXXRecordDecl>(ExistingPattern)->getCanonicalDecl();
+    if (auto *DDD = DClass->DefinitionData.getNotUpdated()) {
+      if (auto *ExistingDD = ExistingClass->DefinitionData.getNotUpdated()) {
+        MergeDefinitionData(ExistingClass, *DDD);
+        Reader.PendingDefinitions.erase(DClass);
+        Reader.MergedDeclContexts.insert(
+            std::make_pair(DClass, ExistingDD->Definition));
+        DClass->IsCompleteDefinition = false;
+      } else {
+        ExistingClass->DefinitionData = DClass->DefinitionData;
+      }
+    }
+    DClass->DefinitionData = ExistingClass->DefinitionData;
+
     return mergeRedeclarable(DClass, cast<TagDecl>(ExistingPattern),
                              Result);
+  }
   if (auto *DFunction = dyn_cast<FunctionDecl>(DPattern))
     return mergeRedeclarable(DFunction, cast<FunctionDecl>(ExistingPattern),
                              Result);
