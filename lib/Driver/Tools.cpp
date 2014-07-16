@@ -5950,7 +5950,7 @@ void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib)) {
     CmdArgs.push_back("--start-group");
-    CmdArgs.push_back(Args.MakeArgString("-lclang_rt." + ArchName));
+    CmdArgs.push_back(Args.MakeArgString("-lclang_rt.builtins-" + ArchName));
     CmdArgs.push_back("-lc");
     CmdArgs.push_back("-lor1k");
     StringRef BoardName = Args.getLastArgValue(options::OPT_mboard_EQ,
