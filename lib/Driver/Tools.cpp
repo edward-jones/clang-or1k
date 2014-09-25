@@ -5892,12 +5892,11 @@ void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("0x100");
 
   // Static vs dynamic management
-  if (Args.hasArg(options::OPT_static)) {
+  if (Args.hasArg(options::OPT_static) || (!Args.hasArg(options::OPT_rdynamic) && !Args.hasArg(options::OPT_shared)) ) {
     CmdArgs.push_back("-Bstatic");
   } else {
     if (Args.hasArg(options::OPT_rdynamic))
       CmdArgs.push_back("-export-dynamic");
-    CmdArgs.push_back("--eh-frame-hdr");
     CmdArgs.push_back("-Bdynamic");
     if (Args.hasArg(options::OPT_shared)) {
       CmdArgs.push_back("-shared");
@@ -5919,7 +5918,6 @@ void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
     llvm::SmallString<128> CrtBegin;
     if (!Args.hasArg(options::OPT_shared)) {
       CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath("crt0.o")));
-
       ("crtbegin." + ArchName + ".o").toVector(CrtBegin);
     } else {
       ("crtbeginS." + ArchName + ".o").toVector(CrtBegin);
@@ -5927,6 +5925,11 @@ void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath(CrtBegin.c_str())));
 
   }
+
+  const ToolChain::path_list Paths = TC.getFilePaths();
+  for (ToolChain::path_list::const_iterator i = Paths.begin(), e = Paths.end();
+       i != e; ++i)
+    CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + *i));
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
   Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
@@ -5936,10 +5939,6 @@ void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_Z_Flag);
   Args.AddAllArgs(CmdArgs, options::OPT_r);
 
-  const ToolChain::path_list Paths = TC.getFilePaths();
-  for (ToolChain::path_list::const_iterator i = Paths.begin(), e = Paths.end();
-       i != e; ++i)
-    CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + *i));
 
   if (D.IsUsingLTO(Args))
     AddGoldPlugin(TC, Args, CmdArgs);
@@ -5961,9 +5960,9 @@ void or1k::Link::ConstructJob(Compilation &C, const JobAction &JA,
     if (!Args.hasArg(options::OPT_nostartfiles)) {
       llvm::SmallString<128> CrtEnd;
       if (!Args.hasArg(options::OPT_shared)) {
-	("crtend." + ArchName + ".o").toVector(CrtEnd);
+	      ("crtend." + ArchName + ".o").toVector(CrtEnd);
       } else {
-	("crtendS." + ArchName + ".o").toVector(CrtEnd);
+	      ("crtendS." + ArchName + ".o").toVector(CrtEnd);
       }
       CmdArgs.push_back(Args.MakeArgString(TC.GetFilePath(CrtEnd.c_str())));
     }

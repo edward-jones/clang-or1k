@@ -713,7 +713,7 @@ public:
   OR1K(const Driver &D, const llvm::Triple &Triple,
                const llvm::opt::ArgList &Args);
 
-  bool IsIntegratedAssemblerDefault() const override { return true; }
+  bool IsIntegratedAssemblerDefault() const override { return false; }
   bool isPICDefault() const override { return false; };
   bool isPIEDefault() const override { return false; };
   bool isPICDefaultForced() const override { return false; };

@@ -2454,8 +2454,8 @@ OR1K::OR1K(const Driver &D, const llvm::Triple& Triple,
   getFilePaths().push_back(SysRoot + "/" + getDriver().DefaultTargetTriple +
 			   "/lib/");
 
-  SmallString<128> CrtPath(getDriver().ResourceDir);
-  llvm::sys::path::append(CrtPath, "lib", "generic");
+  SmallString<128> CrtPath(getDriver().getInstalledDir());
+  llvm::sys::path::append(CrtPath, "..", "lib", "linux");
   getFilePaths().push_back(CrtPath.c_str());
 
   Multilib Default = Multilib()
